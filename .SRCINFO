@@ -3,7 +3,6 @@ pkgbase = systemd
 	pkgrel = 1
 	url = https://www.github.com/systemd/systemd
 	arch = x86_64
-	checkdepends = python-pefile
 	makedepends = acl
 	makedepends = cryptsetup
 	makedepends = docbook-xsl
@@ -50,6 +49,7 @@ pkgbase = systemd
 	makedepends = libpwquality
 	makedepends = qrencode
 	makedepends = lib32-gcc-libs
+	makedepends = python-pefile
 	source = git+https://github.com/systemd/systemd-stable#tag=8cf1da1e9172ba04d90a483a63118873343ea656?signed
 	source = git+https://github.com/systemd/systemd#tag=v255?signed
 	source = 0001-Use-Arch-Linux-device-access-groups.patch
