@@ -50,7 +50,6 @@ pkgbase = systemd
 	makedepends = libpwquality
 	makedepends = qrencode
 	makedepends = lib32-gcc-libs
-	options = strip
 	source = git+https://github.com/systemd/systemd-stable#tag=8cf1da1e9172ba04d90a483a63118873343ea656?signed
 	source = git+https://github.com/systemd/systemd#tag=v255?signed
 	source = 0001-Use-Arch-Linux-device-access-groups.patch
