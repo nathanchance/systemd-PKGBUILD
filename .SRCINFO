@@ -1,5 +1,5 @@
 pkgbase = systemd
-	pkgver = 255.3
+	pkgver = 255.4
 	pkgrel = 1
 	url = https://www.github.com/systemd/systemd
 	arch = x86_64
@@ -51,7 +51,7 @@ pkgbase = systemd
 	makedepends = qrencode
 	makedepends = lib32-gcc-libs
 	makedepends = python-pefile
-	source = git+https://github.com/systemd/systemd-stable#tag=8cf1da1e9172ba04d90a483a63118873343ea656?signed
+	source = git+https://github.com/systemd/systemd-stable#tag=4003dd6754e3446691402d3cc389fbfd4faccc90?signed
 	source = git+https://github.com/systemd/systemd#tag=v255?signed
 	source = 0001-Use-Arch-Linux-device-access-groups.patch
 	source = initcpio-hook-udev
@@ -153,8 +153,8 @@ pkgname = systemd
 	optdepends = libp11-kit: support PKCS#11
 	optdepends = tpm2-tss: unlocking LUKS2 volumes with TPM2
 	provides = nss-myhostname
-	provides = systemd-tools=255.3
-	provides = udev=255.3
+	provides = systemd-tools=255.4
+	provides = udev=255.4
 	conflicts = nss-myhostname
 	conflicts = systemd-tools
 	conflicts = udev
