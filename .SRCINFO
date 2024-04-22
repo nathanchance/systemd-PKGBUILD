@@ -100,6 +100,7 @@ pkgname = systemd
 	license = CC0-1.0
 	license = GPL-2.0-or-later
 	license = MIT-0
+	depends = systemd-libs=255.4
 	depends = acl
 	depends = libacl.so
 	depends = bash
@@ -116,7 +117,6 @@ pkgname = systemd
 	depends = libgcrypt
 	depends = libxcrypt
 	depends = libcrypt.so
-	depends = systemd-libs
 	depends = libidn2
 	depends = lz4
 	depends = pam
@@ -194,22 +194,22 @@ pkgname = systemd-libs
 
 pkgname = systemd-resolvconf
 	pkgdesc = systemd resolvconf replacement (for use with systemd-resolved)
-	depends = systemd
+	depends = systemd=255.4
 	provides = openresolv
 	provides = resolvconf
 	conflicts = resolvconf
 
 pkgname = systemd-sysvcompat
 	pkgdesc = sysvinit compat for systemd
-	depends = systemd
+	depends = systemd=255.4
 	conflicts = sysvinit
 
 pkgname = systemd-ukify
 	pkgdesc = Combine kernel and initrd into a signed Unified Kernel Image
+	depends = systemd=255.4
 	depends = binutils
 	depends = python-cryptography
 	depends = python-pefile
-	depends = systemd
 	optdepends = python-pillow: Show the size of splash image
 	optdepends = sbsigntools: Sign the embedded kernel
 	provides = ukify
