@@ -6,7 +6,7 @@ pkgname=('systemd'
          'systemd-resolvconf'
          'systemd-sysvcompat'
          'systemd-ukify')
-_tag='255.4'
+_tag='255.5'
 # Upstream versioning is incompatible with pacman's version comparisons so we
 # replace tildes with the empty string to make sure pacman's version comparing
 # does the right thing for rc versions:
@@ -15,7 +15,7 @@ _tag='255.4'
 # ➜ vercmp 255rc1 255
 # -1
 pkgver="${_tag/~/}"
-pkgrel=2
+pkgrel=1
 arch=('x86_64')
 license=('LGPL-2.1-or-later')
 url='https://www.github.com/systemd/systemd'
@@ -53,7 +53,7 @@ source=("git+https://github.com/systemd/systemd-stable#tag=v${_tag}?signed"
         '30-systemd-tmpfiles.hook'
         '30-systemd-udev-reload.hook'
         '30-systemd-update.hook')
-sha512sums=('0c41c21931c5f08b5c91fe718d90f8cb11fb83429b3028bde9922605a35ea81d8452b00af99775b519b19195b8ba0084147d13dec1c5dfe9c905d769018b0676'
+sha512sums=('ab0d47a29d60cb88f0934a9204c71cd78e2f5f568b9da532fdd4f8da55a352fce51cbcbaf17dc1a6f5b3c43ed7579876c724abcc2af5d8c4d3979f2ede60982f'
             'd430427987309483c99062adb02741d25239ba5fbb97053ef817c0c5a0a935328af9c8b651de2b119b0e851dcf6623f01343859735ff81d7013ab0133e67c7ea'
             '3ccf783c28f7a1c857120abac4002ca91ae1f92205dcd5a84aff515d57e706a3f9240d75a0a67cff5085716885e06e62597baa86897f298662ec36a940cf410e'
             '61032d29241b74a0f28446f8cf1be0e8ec46d0847a61dadb2a4f096e8686d5f57fe5c72bcf386003f6520bc4b5856c32d63bf3efe7eb0bc0deefc9f68159e648'
