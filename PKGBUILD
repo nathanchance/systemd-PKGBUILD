@@ -15,7 +15,7 @@ _tag='255.5'
 # ➜ vercmp 255rc1 255
 # -1
 pkgver="${_tag/~/}"
-pkgrel=1
+pkgrel=2
 arch=('x86_64')
 license=('LGPL-2.1-or-later')
 url='https://www.github.com/systemd/systemd'
