@@ -7,14 +7,10 @@ pkgname=('systemd'
          'systemd-sysvcompat'
          'systemd-ukify')
 _tag='255.6'
-# Upstream versioning is incompatible with pacman's version comparisons so we
-# replace tildes with the empty string to make sure pacman's version comparing
-# does the right thing for rc versions:
-# ➜ vercmp 255~rc1 255
-# 1
-# ➜ vercmp 255rc1 255
-# -1
-pkgver="${_tag/~/}"
+# Upstream versioning is incompatible with pacman's version comparisons, one
+# way or another. So we replace dashes and tildes with the empty string to
+# make sure pacman's version comparing does the right thing for rc versions:
+pkgver="${_tag/[-~]/}"
 pkgrel=1
 arch=('x86_64')
 license=('LGPL-2.1-or-later')
@@ -135,9 +131,9 @@ build() {
 
   local _meson_options=(
     -Dversion-tag="${_meson_version}-arch"
-    # We use the version without tildes as the shared library tag because
-    # pacman looks at the shared library version.
-    -Dshared-lib-tag="${_meson_version/~/}"
+    # We use the version without dashes and tildes as the shared library
+    # tag because pacman looks at the shared library version.
+    -Dshared-lib-tag="${_meson_version/[-~]/}"
     -Dmode="${_meson_mode}"
 
     -Dapparmor=false
