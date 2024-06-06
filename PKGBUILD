@@ -6,12 +6,12 @@ pkgname=('systemd'
          'systemd-resolvconf'
          'systemd-sysvcompat'
          'systemd-ukify')
-_tag='256-rc3'
+_tag='256-rc4'
 # Upstream versioning is incompatible with pacman's version comparisons, one
 # way or another. So we replace dashes and tildes with the empty string to
 # make sure pacman's version comparing does the right thing for rc versions:
 pkgver="${_tag/[-~]/}"
-pkgrel=2
+pkgrel=1
 arch=('x86_64')
 license=('LGPL-2.1-or-later')
 url='https://www.github.com/systemd/systemd'
@@ -49,8 +49,8 @@ source=("git+https://github.com/systemd/systemd-stable#tag=v${_tag}?signed"
         '30-systemd-tmpfiles.hook'
         '30-systemd-udev-reload.hook'
         '30-systemd-update.hook')
-sha512sums=('e815c971a65c18b258dfd75a4a1c73089e49f9f8001add3b54313786739cb440f96969ed4763ec17f11822291ea535d131b11c6c039216e7b8e9033384d8a938'
-            'e815c971a65c18b258dfd75a4a1c73089e49f9f8001add3b54313786739cb440f96969ed4763ec17f11822291ea535d131b11c6c039216e7b8e9033384d8a938'
+sha512sums=('8919a5e584b4640b141fc78db68b0a6165ca927b714a7ad2164c67a9061bba72630ecf883ee57937a016e3b14efd87c17da8e4ad003d9b186840a466409eef88'
+            '8919a5e584b4640b141fc78db68b0a6165ca927b714a7ad2164c67a9061bba72630ecf883ee57937a016e3b14efd87c17da8e4ad003d9b186840a466409eef88'
             '3ccf783c28f7a1c857120abac4002ca91ae1f92205dcd5a84aff515d57e706a3f9240d75a0a67cff5085716885e06e62597baa86897f298662ec36a940cf410e'
             '61032d29241b74a0f28446f8cf1be0e8ec46d0847a61dadb2a4f096e8686d5f57fe5c72bcf386003f6520bc4b5856c32d63bf3efe7eb0bc0deefc9f68159e648'
             'c416e2121df83067376bcaacb58c05b01990f4614ad9de657d74b6da3efa441af251d13bf21e3f0f71ddcb4c9ea658b81da3d915667dc5c309c87ec32a1cb5a5'
@@ -87,8 +87,6 @@ if ((_systemd_UPSTREAM)); then
 fi
 
 _backports=(
-  # current git main
-  "v${_tag}..6448993a4b2897658d32c5ec423841e22aa14c68"
 )
 
 _reverts=(
