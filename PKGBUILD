@@ -134,17 +134,17 @@ build() {
     -Dshared-lib-tag="${_meson_version}"
     -Dmode="${_meson_mode}"
 
-    -Dapparmor=false
-    -Dbootloader=true
-    -Dxenctrl=false
-    -Dbpf-framework=true
+    -Dapparmor=disabled
+    -Dbootloader=enabled
+    -Dxenctrl=disabled
+    -Dbpf-framework=enabled
     -Dima=false
-    -Dinstall-tests=true
-    -Dlibidn2=true
-    -Dlz4=true
-    -Dman=true
+    -Dinstall-tests=false
+    -Dlibidn2=enabled
+    -Dlz4=enabled
+    -Dman=enabled
     -Dnscd=false
-    -Dselinux=false
+    -Dselinux=disabled
 
     # We disable DNSSEC by default, it still causes trouble:
     # https://github.com/systemd/systemd/issues/10579
