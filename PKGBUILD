@@ -139,7 +139,7 @@ build() {
     -Dxenctrl=disabled
     -Dbpf-framework=enabled
     -Dima=false
-    -Dinstall-tests=false
+    -Dinstall-tests=true
     -Dlibidn2=enabled
     -Dlz4=enabled
     -Dman=enabled
