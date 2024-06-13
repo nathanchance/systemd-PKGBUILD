@@ -52,7 +52,6 @@ pkgbase = systemd
 	makedepends = lib32-gcc-libs
 	makedepends = python-pefile
 	conflicts = mkinitcpio<38-1
-	source = git+https://github.com/systemd/systemd-stable#tag=v256?signed
 	source = git+https://github.com/systemd/systemd#tag=v256?signed
 	source = 0001-Use-Arch-Linux-device-access-groups.patch
 	source = arch.conf
@@ -74,7 +73,6 @@ pkgbase = systemd
 	validpgpkeys = A9EA9081724FFAE0484C35A1A81CEA22BC8C7E2E
 	validpgpkeys = 9A774DB5DB996C154EBBFBFDA0099A18E29326E1
 	validpgpkeys = 5C251B5FC54EB2F80F407AAAC54CA336CFEB557E
-	sha512sums = 0a82b5708d1025dbe12a722e3b7e946c5136a17ea2d9b73afba02da474873b3373cd7c1c4eff8bd612c2b16321f31a6109e3c34e548e48ae88fa5bb3fab00383
 	sha512sums = 0a82b5708d1025dbe12a722e3b7e946c5136a17ea2d9b73afba02da474873b3373cd7c1c4eff8bd612c2b16321f31a6109e3c34e548e48ae88fa5bb3fab00383
 	sha512sums = 3ccf783c28f7a1c857120abac4002ca91ae1f92205dcd5a84aff515d57e706a3f9240d75a0a67cff5085716885e06e62597baa86897f298662ec36a940cf410e
 	sha512sums = 61032d29241b74a0f28446f8cf1be0e8ec46d0847a61dadb2a4f096e8686d5f57fe5c72bcf386003f6520bc4b5856c32d63bf3efe7eb0bc0deefc9f68159e648
