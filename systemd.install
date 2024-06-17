@@ -13,6 +13,10 @@ add_journal_acls() {
 post_common() {
   systemd-sysusers
   journalctl --update-catalog
+
+  if ! grep -qe '^/usr/bin/systemd-home-fallback-shell$' etc/shells; then
+    echo '/usr/bin/systemd-home-fallback-shell' >> etc/shells
+  fi
 }
 
 post_install() {
@@ -58,6 +62,10 @@ post_upgrade() {
       "_${v//[.-]/_}_changes"
     fi
   done
+}
+
+post_remove() {
+  sed -i -r '/^\/usr\/bin\/systemd-home-fallback-shell$/d' etc/shells
 }
 
 # vim:set ts=2 sw=2 et:
