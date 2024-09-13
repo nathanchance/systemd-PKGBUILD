@@ -141,6 +141,7 @@ build() {
     -Dman=enabled
     -Dnscd=false
     -Dselinux=disabled
+    -Dsshdprivsepdir=/usr/share/empty.sshd
     -Dvmlinux-h=generated
 
     # We disable DNSSEC by default, it still causes trouble:
