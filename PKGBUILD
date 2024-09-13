@@ -141,6 +141,7 @@ build() {
     -Dman=enabled
     -Dnscd=false
     -Dselinux=disabled
+    -Dvmlinux-h=generated
 
     # We disable DNSSEC by default, it still causes trouble:
     # https://github.com/systemd/systemd/issues/10579
