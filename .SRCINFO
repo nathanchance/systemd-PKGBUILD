@@ -52,6 +52,7 @@ pkgbase = systemd
 	makedepends = qrencode
 	makedepends = lib32-gcc-libs
 	makedepends = python-pefile
+	makedepends = linux-headers
 	conflicts = mkinitcpio<38-1
 	source = git+https://github.com/systemd/systemd#tag=v256.6?signed
 	source = 0001-Use-Arch-Linux-device-access-groups.patch
