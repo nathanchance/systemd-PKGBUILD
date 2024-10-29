@@ -229,7 +229,7 @@ package_systemd() {
           etc/udev/udev.conf)
   install=systemd.install
 
-  meson install -C build --destdir "$pkgdir" "${_meson_install[@]}"
+  meson install -C build --no-rebuild --destdir "$pkgdir" "${_meson_install[@]}"
 
   # we'll create this on installation
   rmdir "$pkgdir"/var/log/journal/remote
