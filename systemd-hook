@@ -68,6 +68,12 @@ case "$op" in
     fi
     ;;
 
+  # marked with 'systemctl set-property ... Markers=needs-restart'
+  restart-marked)
+    systemd_live
+    /usr/bin/systemctl reload-or-restart --marked
+    ;;
+
   # For use by other packages
   reload)
     systemd_live
