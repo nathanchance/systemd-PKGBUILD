@@ -1,5 +1,13 @@
 # Maintainer: Christian Hesse <mail@eworm.de>
 
+# ➡️ Pushing pre-releases to [core-testing] can cause havoc, especially
+#   as all [core] packages are built there, and may be moved before.
+#   Anyway, pre-release packages may be available in my personal testing
+#   repository. Brave souls add it with:
+#     [eworm-testing]
+#     SigLevel = Required
+#     Server = https://pkgbuild.com/~eworm/$repo/$arch/
+
 pkgbase=systemd
 pkgname=('systemd'
          'systemd-libs'
