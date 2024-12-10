@@ -37,7 +37,7 @@ post_upgrade() {
     systemctl --system daemon-reexec
 
     # reexec systemd user instances
-    systemctl kill --kill-whom='main' --signal='SIGRTMIN+25' 'user@*.service'
+    systemctl reload 'user@*.service'
 
     # mark systemd services for later restart
     for UNIT in $(systemctl list-units --state=running --plain --quiet 'systemd-*.service' | cut -d' ' -f1 | grep -Ev '^systemd-(logind|networkd)\.service$'); do

@@ -41,7 +41,7 @@ case "$op" in
     ;;
   daemon-reload-user)
     systemd_live
-    /usr/bin/systemctl kill --kill-whom='main' --signal='SIGHUP' 'user@*.service'
+    /usr/bin/systemctl reload 'user@*.service'
     ;;
   hwdb)
     /usr/bin/systemd-hwdb --usr update
