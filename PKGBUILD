@@ -14,11 +14,10 @@ pkgname=('systemd'
          'systemd-resolvconf'
          'systemd-sysvcompat'
          'systemd-ukify')
-_tag='257.2'
 # Upstream versioning is incompatible with pacman's version comparisons, one
-# way or another. So we replace dashes and tildes with the empty string to
-# make sure pacman's version comparing does the right thing for rc versions:
-pkgver="${_tag/[-~]/}"
+# way or another. We use proper version for pacman here (no dash for rc
+# release!), and change in source array below.
+pkgver='257.2'
 pkgrel=2
 arch=('x86_64')
 license=('LGPL-2.1-or-later')
@@ -36,7 +35,9 @@ validpgpkeys=('63CDA1E5D3FC22B998D20DD6327F26951A015CC4'  # Lennart Poettering <
               'A9EA9081724FFAE0484C35A1A81CEA22BC8C7E2E'  # Luca Boccassi <luca.boccassi@gmail.com>
               '9A774DB5DB996C154EBBFBFDA0099A18E29326E1'  # Yu Watanabe <watanabe.yu+github@gmail.com>
               '5C251B5FC54EB2F80F407AAAC54CA336CFEB557E') # Zbigniew Jędrzejewski-Szmek <zbyszek@in.waw.pl>
-source=("git+https://github.com/systemd/systemd#tag=v${_tag}?signed"
+# For pacman's version comparisons $pkgver is missing the dash that would be
+# in an upstream rc version so add it back when fetching the tag from github.
+source=("git+https://github.com/systemd/systemd#tag=v${pkgver/rc/-rc}?signed"
         '0001-Use-Arch-Linux-device-access-groups.patch'
         # bootloader files
         'arch.conf'
