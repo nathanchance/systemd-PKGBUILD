@@ -206,6 +206,10 @@ pkgname = systemd-sysvcompat
 	depends = systemd=257.2
 	conflicts = sysvinit
 
+pkgname = systemd-tests
+	pkgdesc = systemd tests
+	depends = systemd=257.2
+
 pkgname = systemd-ukify
 	pkgdesc = Combine kernel and initrd into a signed Unified Kernel Image
 	depends = systemd=257.2

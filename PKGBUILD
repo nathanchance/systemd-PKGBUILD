@@ -13,6 +13,7 @@ pkgname=('systemd'
          'systemd-libs'
          'systemd-resolvconf'
          'systemd-sysvcompat'
+         'systemd-tests'
          'systemd-ukify')
 # Upstream versioning is incompatible with pacman's version comparisons, one
 # way or another. We use proper version for pacman here (no dash for rc
@@ -78,22 +79,10 @@ sha512sums=('60e09576738abf1d328d06daae8981780a9a4facc5b09e2a3ae24b8461e23d3be2a
             '825b9dd0167c072ba62cabe0677e7cd20f2b4b850328022540f122689d8b25315005fa98ce867cf6e7460b2b26df16b88bb3b5c9ebf721746dce4e2271af7b97')
 
 _meson_version="${pkgver}-${pkgrel}"
-_meson_vcs_tag='false'
-_meson_mode='release'
-_meson_compile=()
-_meson_install=()
 _systemd_src_dir="${pkgbase}"
 
 if ((_systemd_UPSTREAM)); then
   _meson_version="${pkgver}"
-  _meson_vcs_tag='true'
-  _meson_mode='developer'
-  pkgname+=('systemd-tests')
-  if ((_systemd_QUIET)); then
-    _meson_install=('--quiet')
-  else
-    _meson_compile=('--verbose')
-  fi
 fi
 
 # Some heuristics to detect that we are building on OBS, with no network access. Skip
@@ -147,9 +136,9 @@ build() {
 
   local _meson_options=(
     -Dversion-tag="${_meson_version}-arch"
-    -Dvcs-tag="${_meson_vcs_tag}"
+    -Dvcs-tag=false
     -Dshared-lib-tag="${_meson_version}"
-    -Dmode="${_meson_mode}"
+    -Dmode=release
 
     -Dapparmor=disabled
     -Dbootloader=enabled
@@ -192,7 +181,7 @@ build() {
 
   arch-meson "${_systemd_src_dir}" build "${_meson_options[@]}" $MESON_EXTRA_CONFIGURE_OPTIONS
 
-  meson compile -C build "${_meson_compile[@]}"
+  meson compile -C build
 }
 
 check() {
@@ -250,7 +239,7 @@ package_systemd() {
           etc/udev/udev.conf)
   install=systemd.install
 
-  meson install -C build --no-rebuild --destdir "$pkgdir" "${_meson_install[@]}"
+  meson install -C build --no-rebuild --destdir "$pkgdir" --quiet
 
   # we'll create this on installation
   rmdir "$pkgdir"/var/log/journal/remote
