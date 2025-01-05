@@ -81,6 +81,7 @@ _meson_vcs_tag='false'
 _meson_mode='release'
 _meson_compile=()
 _meson_install=()
+_systemd_src_dir="${pkgbase}"
 
 if ((_systemd_UPSTREAM)); then
   _meson_version="${pkgver}"
@@ -94,6 +95,15 @@ if ((_systemd_UPSTREAM)); then
   fi
 fi
 
+# Some heuristics to detect that we are building on OBS, with no network access. Skip
+# git verification, and use the OBS-provided tarball instead. The sources will be
+# unpacked by OBS in $package-$version/
+if [ -f /.build/build.dist ] && [ -d /usr/src/packages/SOURCES ] &&  [ -d /usr/src/packages/BUILD ] &&  [ -d /usr/src/packages/OTHER ]; then
+  source[0]="${pkgbase}-${pkgver}.tar.gz"
+  sha512sums[0]='SKIP'
+  _systemd_src_dir="${pkgbase}-${pkgver}"
+fi
+
 _backports=(
 )
 
@@ -101,7 +111,7 @@ _reverts=(
 )
 
 prepare() {
-  cd "${pkgbase}"
+  cd "${_systemd_src_dir}"
 
   local _c _l
   for _c in "${_backports[@]}"; do
@@ -179,7 +189,7 @@ build() {
     -Dsbat-distro-url="https://archlinux.org/packages/core/x86_64/${pkgname}/"
   )
 
-  arch-meson "${pkgbase}" build "${_meson_options[@]}" $MESON_EXTRA_CONFIGURE_OPTIONS
+  arch-meson "${_systemd_src_dir}" build "${_meson_options[@]}" $MESON_EXTRA_CONFIGURE_OPTIONS
 
   meson compile -C build "${_meson_compile[@]}"
 }
