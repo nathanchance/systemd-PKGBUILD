@@ -8,7 +8,7 @@ services_needing_restart() {
   systemctl list-units --state=running --plain --quiet 'systemd-*.service' \
     | cut -d' ' -f1 \
     | grep -Ev '^systemd-(logind|networkd)\.service$' \
-    | grep -Ev '^systemd-(nspawn|vmspawn)@.*\.service$'
+    | grep -Ev '^systemd-.*@.*\.service$'
 }
 
 post_common() {
