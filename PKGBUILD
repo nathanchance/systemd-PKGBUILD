@@ -100,7 +100,7 @@ fi
 # git verification, and use the OBS-provided tarball instead. The sources will be
 # unpacked by OBS in $package-$version/
 if [ -f /.build/build.dist ] && [ -d /usr/src/packages/SOURCES ] &&  [ -d /usr/src/packages/BUILD ] &&  [ -d /usr/src/packages/OTHER ]; then
-  source[0]="${pkgbase}-${pkgver}.tar.gz"
+  source[0]="$(find . -name "${pkgbase}-${pkgver}.tar.*" -print -quit)"
   sha512sums[0]='SKIP'
   _systemd_src_dir="${pkgbase}-${pkgver}"
 fi
