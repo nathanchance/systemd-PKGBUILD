@@ -103,6 +103,9 @@ _reverts=(
 prepare() {
   cd "${_systemd_src_dir}"
 
+  # Replace cdrom/dialout/tape groups with optical/uucp/storage
+  patch -Np1 -i ../0001-Use-Arch-Linux-device-access-groups.patch
+
   local _c _l
   for _c in "${_backports[@]}"; do
     if [[ "${_c}" == *..* ]]; then _l='--reverse'; else _l='--max-count=1'; fi
@@ -114,9 +117,6 @@ prepare() {
     git log --oneline "${_l}" "${_c}"
     git revert --mainline 1 --no-commit "${_c}"
   done
-
-  # Replace cdrom/dialout/tape groups with optical/uucp/storage
-  patch -Np1 -i ../0001-Use-Arch-Linux-device-access-groups.patch
 }
 
 build() {
