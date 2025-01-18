@@ -106,6 +106,11 @@ prepare() {
   # Replace cdrom/dialout/tape groups with optical/uucp/storage
   patch -Np1 -i ../0001-Use-Arch-Linux-device-access-groups.patch
 
+  # return if not a git repository
+  if ! git status >/dev/null 2>&1; then
+    return
+  fi
+
   local _c _l
   for _c in "${_backports[@]}"; do
     if [[ "${_c}" == *..* ]]; then _l='--reverse'; else _l='--max-count=1'; fi
