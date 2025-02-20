@@ -158,7 +158,6 @@ pkgname = systemd
 	replaces = nss-myhostname
 	replaces = systemd-tools
 	replaces = udev
-	backup = etc/pam.d/systemd-user
 	backup = etc/systemd/coredump.conf
 	backup = etc/systemd/homed.conf
 	backup = etc/systemd/journald.conf

@@ -224,8 +224,7 @@ package_systemd() {
               'libfido2: unlocking LUKS2 volumes with FIDO2 token'
               'libp11-kit: support PKCS#11'
               'tpm2-tss: unlocking LUKS2 volumes with TPM2')
-  backup=(etc/pam.d/systemd-user
-          etc/systemd/coredump.conf
+  backup=(etc/systemd/coredump.conf
           etc/systemd/homed.conf
           etc/systemd/journald.conf
           etc/systemd/journal-remote.conf
@@ -300,7 +299,7 @@ package_systemd() {
   install -D -m0644 -t "$pkgdir"/usr/share/libalpm/hooks *.hook
 
   # overwrite the systemd-user PAM configuration with our own
-  install -D -m0644 systemd-user.pam "$pkgdir"/etc/pam.d/systemd-user
+  install -D -m0644 systemd-user.pam "$pkgdir"/usr/lib/pam.d/systemd-user
 
   # create a directory for cryptsetup keys
   install -d -m0700 "$pkgdir"/etc/cryptsetup-keys.d
