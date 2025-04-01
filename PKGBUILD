@@ -154,7 +154,6 @@ build() {
     -Dlibidn2=enabled
     -Dlz4=enabled
     -Dman=enabled
-    -Dnscd=false
     -Dselinux=disabled
     -Dsshdprivsepdir=/usr/share/empty.sshd
     -Dvmlinux-h=provided
