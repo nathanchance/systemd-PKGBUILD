@@ -4,7 +4,11 @@ version = 1
 path = [
     "PKGBUILD",
     "README.md",
+    "arch.conf",
     "keys/**",
+    "loader.conf",
+    "splash-arch.bmp",
+    "systemd-hook",
     ".SRCINFO",
     ".nvchecker.toml",
     "*.install",
