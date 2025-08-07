@@ -98,6 +98,9 @@ _backports=(
 )
 
 _reverts=(
+  # resolved: don't wait for TLS close_notify replies unnecessarily
+  # https://github.com/systemd/systemd/issues/38509
+  '12a455db368340733ac9a701d9a5864b612d3408'
 )
 
 prepare() {
