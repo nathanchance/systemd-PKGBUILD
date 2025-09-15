@@ -128,15 +128,16 @@ build() {
   local _timeservers=({0..3}.arch.pool.ntp.org)
   local _nameservers=(
     # We use these public name services, ordered by their privacy policy (hopefully):
-    #  * Cloudflare (https://1.1.1.1/)
-    #  * Quad9 (https://www.quad9.net/)
-    #  * Google (https://developers.google.com/speed/public-dns/)
-    '1.1.1.1#cloudflare-dns.com'
+    #  * Quad9 (https://quad9.net/privacy/policy/)
     '9.9.9.9#dns.quad9.net'
-    '8.8.8.8#dns.google'
-    '2606:4700:4700::1111#cloudflare-dns.com'
     '2620:fe::9#dns.quad9.net'
+    #  * Cloudflare (https://developers.cloudflare.com/1.1.1.1/privacy/public-dns-resolver/)
+    '1.1.1.1#cloudflare-dns.com'
+    '2606:4700:4700::1111#cloudflare-dns.com'
+    #  * Google (https://developers.google.com/speed/public-dns/privacy)
+    '8.8.8.8#dns.google'
     '2001:4860:4860::8888#dns.google'
+    # You do not agree? Fine, change it in your local configuration.
   )
 
   local _meson_options=(
