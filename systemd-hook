@@ -18,6 +18,7 @@ systemd_live() {
 
 udevd_live() {
   skip_chrooted
+  systemd_live
 
   if [ ! -S /run/udev/control ]; then
     echo >&2 "  Skipped: Device manager is not running."
