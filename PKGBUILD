@@ -160,11 +160,8 @@ build() {
     -Dvmlinux-h=provided
     -Dvmlinux-h-path=/usr/src/linux/vmlinux.h
 
-    # We disable DNSSEC by default, it still causes trouble:
-    # https://github.com/systemd/systemd/issues/10579
-
     -Ddbuspolicydir=/usr/share/dbus-1/system.d
-    -Ddefault-dnssec=no
+    -Ddefault-dnssec=yes
     -Ddefault-kill-user-processes=false
     -Ddefault-locale='C.UTF-8'
     -Dlocalegen-path=/usr/bin/locale-gen
