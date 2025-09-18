@@ -161,7 +161,7 @@ build() {
     -Dvmlinux-h-path=/usr/src/linux/vmlinux.h
 
     -Ddbuspolicydir=/usr/share/dbus-1/system.d
-    -Ddefault-dnssec=yes
+    -Ddefault-dnssec=allow-downgrade
     -Ddefault-kill-user-processes=false
     -Ddefault-locale='C.UTF-8'
     -Dlocalegen-path=/usr/bin/locale-gen
