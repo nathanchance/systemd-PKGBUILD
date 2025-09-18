@@ -80,6 +80,12 @@ case "$op" in
     /usr/bin/systemctl try-reload-or-restart "$@"
     ;;
 
+  # For use by other packages
+  restart)
+    systemd_live
+    /usr/bin/systemctl try-restart "$@"
+    ;;
+
   *)
     echo >&2 "  Invalid operation '$op'"
     exit 1
