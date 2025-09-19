@@ -95,6 +95,9 @@ if [ -f /.build/build.dist ] && [ -d /usr/src/packages/SOURCES ] &&  [ -d /usr/s
 fi
 
 _backports=(
+  # virt: revert to detect chroot by comparing with / rather than /proc/PID/root
+  # https://github.com/systemd/systemd/pull/39021
+  '01184496a2b518f33c56b5803549f27fa8f226fe'
 )
 
 _reverts=(
