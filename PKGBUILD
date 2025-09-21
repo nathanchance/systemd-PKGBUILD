@@ -98,6 +98,10 @@ _backports=(
   # virt: revert to detect chroot by comparing with / rather than /proc/PID/root
   # https://github.com/systemd/systemd/pull/39021
   '01184496a2b518f33c56b5803549f27fa8f226fe'
+
+  # basic/efivars: read EFI variables using one read(), not two #38864
+  # https://github.com/systemd/systemd/pull/38864
+  '9db9d6806e398465a6366dfc5bdde2e24338ac29~1..4125e0c3db9fd8a2102781674db7aae263714aec'
 )
 
 _reverts=(
