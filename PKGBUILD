@@ -105,6 +105,9 @@ _backports=(
 
   # udev,login: update ACL on static device nodes #39071
   '41c4a69653f7ca48a449de172e73acd43eda81a4~1..2c762d90cfe7d67f10af87986ed2e6f0005eabfb'
+
+  # nspawn: don't try to connect to D-Bus when it's not necessary #39045
+  'c3d5f5f165ce7ccf8d57c4272c39d83a08279db7'
 )
 
 _reverts=(
