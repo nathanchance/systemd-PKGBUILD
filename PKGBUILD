@@ -102,6 +102,9 @@ _backports=(
   # basic/efivars: read EFI variables using one read(), not two #38864
   # https://github.com/systemd/systemd/pull/38864
   '9db9d6806e398465a6366dfc5bdde2e24338ac29~1..4125e0c3db9fd8a2102781674db7aae263714aec'
+
+  # udev,login: update ACL on static device nodes #39071
+  '41c4a69653f7ca48a449de172e73acd43eda81a4~1..2c762d90cfe7d67f10af87986ed2e6f0005eabfb'
 )
 
 _reverts=(
