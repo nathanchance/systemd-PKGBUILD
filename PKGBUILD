@@ -104,12 +104,7 @@ prepare() {
   cd "${_systemd_src_dir}"
 
   # Replace cdrom/dialout/tape groups with optical/uucp/storage
-  patch -Np1 -i ../0001-Use-Arch-Linux-device-access-groups.patch
-
-  # return if not a git repository
-  if ! git status >/dev/null 2>&1; then
-    return
-  fi
+  git apply -3v ../0001-Use-Arch-Linux-device-access-groups.patch
 
   local _c _l
   for _c in "${_backports[@]}"; do
