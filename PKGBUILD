@@ -108,6 +108,9 @@ _backports=(
 
   # nspawn: don't try to connect to D-Bus when it's not necessary #39045
   'c3d5f5f165ce7ccf8d57c4272c39d83a08279db7'
+
+  # measure: strip tpm 1.x remnants and make GetActivePcrBanks() work #39089
+  '496489c2a70b1675af679c1d33cee035fe7c9aff~1..b388fa20c735add38080a746fd831273820c93ac'
 )
 
 _reverts=(
