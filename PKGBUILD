@@ -111,6 +111,11 @@ _backports=(
 
   # measure: strip tpm 1.x remnants and make GetActivePcrBanks() work #39089
   '496489c2a70b1675af679c1d33cee035fe7c9aff~1..b388fa20c735add38080a746fd831273820c93ac'
+
+  # sd-boot: allow configuration of log levels (#38701)
+  # Well, this is mostly cosmetic... and to avoid a little boot delay. In case
+  # of conflicts with later changes we will just drop it.
+  '419e4dc450055a27b8ab267c57fe0b6877afe4c8~1..b3f3ce28f85509b688b30ae4714447780a48746f'
 )
 
 _reverts=(
