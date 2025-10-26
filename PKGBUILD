@@ -305,6 +305,10 @@ package_systemd() {
   # handle uncommon license
   install -d -m0755 "$pkgdir/usr/share/licenses/$pkgbase"
   ln -s -t "$_" /usr/share/doc/systemd/LICENSES/MIT-0.txt
+
+  # symlink kernel-install to installkernel
+  ln -s kernel-install /usr/bin/installkernel
+  ln -s kernel-install.8.gz "$pkgdir"/usr/share/man/man8/installkernel.8.gz
 }
 
 package_systemd-libs() {
