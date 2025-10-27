@@ -157,6 +157,7 @@ build() {
     -Dman=enabled
     -Dselinux=disabled
     -Dsshdprivsepdir=/usr/share/empty.sshd
+    -Dsysupdated=enabled
     -Dvmlinux-h=provided
     -Dvmlinux-h-path=/usr/src/linux/vmlinux.h
 
