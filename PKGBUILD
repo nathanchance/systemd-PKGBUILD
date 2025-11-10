@@ -19,7 +19,7 @@ pkgname=('systemd'
 # way or another. We use proper version for pacman here (no dash for rc
 # release!), and change in source array below.
 pkgver=259.1
-pkgrel=1
+pkgrel=1.1
 arch=('x86_64')
 license=('LGPL-2.1-or-later')
 url='https://www.github.com/systemd/systemd'
@@ -40,6 +40,7 @@ validpgpkeys=('63CDA1E5D3FC22B998D20DD6327F26951A015CC4'  # Lennart Poettering <
 # in an upstream rc version so add it back when fetching the tag from github.
 source=("git+https://github.com/systemd/systemd#tag=v${pkgver/rc/-rc}?signed"
         '0001-Use-Arch-Linux-device-access-groups.patch'
+        'revert-852de7ed703655ad39321188fb3e8941a7fb8e0d.patch'
         # bootloader files
         'arch.conf'
         'loader.conf'
@@ -61,6 +62,7 @@ source=("git+https://github.com/systemd/systemd#tag=v${pkgver/rc/-rc}?signed"
         '35-systemd-update.hook')
 sha512sums=('6d39209c4168c3de01399e4dbb7958961790e4c4e508cd1153038daa62620ab74bd14307237f738c2b22cb61c4c235826a48c18ce38dba3df2086a28deb0bad1'
             'ddb9401e47d0bf01874f255803a4b2167ec631484189d29d03694101fd9c77724e735f16d99c5f4ffd8061ae78839b2826ff0e0a925a6f0dbca25f2cfb271a82'
+            '78888a6512456acf85c6708f9de56421798db1524269f3333390efba3a9d3e1a80e11cfa5968bc5a0781d97764d02661b4c9c36251cc67fd6bebbcf30539e3b2'
             '61032d29241b74a0f28446f8cf1be0e8ec46d0847a61dadb2a4f096e8686d5f57fe5c72bcf386003f6520bc4b5856c32d63bf3efe7eb0bc0deefc9f68159e648'
             '3194d1f8bff31b88a79657df83632b9224b66ca2cf8fd806a3ef35cf7a43f46c09c57f3dfd02256a99b6514a8f789b7d3bcfd7e17e00e34aa55ff0c6cedb5f01'
             '5a1d78b5170da5abe3d18fdf9f2c3a4d78f15ba7d1ee9ec2708c4c9c2e28973469bc19386f70b3cf32ffafbe4fcc4303e5ebbd6d5187a1df3314ae0965b25e75'
@@ -105,6 +107,9 @@ prepare() {
 
   # Replace cdrom/dialout/tape groups with optical/uucp/storage
   git apply -3v ../0001-Use-Arch-Linux-device-access-groups.patch
+
+  # https://github.com/systemd/systemd/issues/39037
+  git apply -3v ../revert-852de7ed703655ad39321188fb3e8941a7fb8e0d.patch
 
   local _c _l
   for _c in "${_backports[@]}"; do

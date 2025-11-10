@@ -1,0 +1,1116 @@
+From b407950db28d7a0f4ce74f19ff97deb157f7893c Mon Sep 17 00:00:00 2001
+From: Nathan Chancellor <nathan@kernel.org>
+Date: Mon, 10 Nov 2025 16:25:14 -0700
+Subject: [PATCH] Revert "nspawn: Prepare --bind-user= logic for reuse in
+ systemd-vmspawn"
+
+This reverts commit 852de7ed703655ad39321188fb3e8941a7fb8e0d.
+
+Generated with:
+
+  $ git revert --no-commit ac54da0718531bf5b44c8f13c01cd01dac3a5b30
+  $ git revert --no-commit 852de7ed703655ad39321188fb3e8941a7fb8e0d
+  # To deal with .destination_uid added by 88fce09026 ("nspawn: fix --link-journal=host with --private-users=pick and friends")
+  $ sed -i '/destination_uid/d' src/nspawn/nspawn.c
+  # To restore ac54da0718531bf5b44c8f13c01cd01dac3a5b30
+  $ sed -i 's;container;machine;g' src/nspawn/nspawn-bind-user.c
+
+Link: https://github.com/systemd/systemd/issues/39037
+Signed-off-by: Nathan Chancellor <nathan@kernel.org>
+---
+ man/systemd-nspawn.xml         |   9 +-
+ src/basic/forward.h            |   2 -
+ src/nspawn/nspawn-bind-user.c  | 332 ++++++++++++++++++++++++++++++++-
+ src/nspawn/nspawn-bind-user.h  |  25 ++-
+ src/nspawn/nspawn-mount.c      |   8 +-
+ src/nspawn/nspawn-mount.h      |   1 -
+ src/nspawn/nspawn.c            | 144 +++++++++++---
+ src/shared/machine-bind-user.c | 302 ------------------------------
+ src/shared/machine-bind-user.h |  30 ---
+ src/shared/meson.build         |   1 -
+ 10 files changed, 477 insertions(+), 377 deletions(-)
+ delete mode 100644 src/shared/machine-bind-user.c
+ delete mode 100644 src/shared/machine-bind-user.h
+
+diff --git a/man/systemd-nspawn.xml b/man/systemd-nspawn.xml
+index 4e019ee732..dac81f6e98 100644
+--- a/man/systemd-nspawn.xml
++++ b/man/systemd-nspawn.xml
+@@ -1605,8 +1605,10 @@ After=sys-subsystem-net-devices-ens1.device</programlisting>
+ 
+         <orderedlist>
+           <listitem><para>The user's home directory is bind mounted from the host into
+-          <filename>/run/host/home/</filename>, using an idmapped mount to map the host user's UID/GID to its
+-          assigned UID/GID in the container.</para></listitem>
++          <filename>/run/host/home/</filename>.</para></listitem>
++
++          <listitem><para>An additional UID/GID mapping is added that maps the host user's UID/GID to a
++          container UID/GID, allocated from the 60514…60577 range.</para></listitem>
+ 
+           <listitem><para>A JSON user and group record is generated in <filename>/run/userdb/</filename> that
+           describes the mapped user. It contains a minimized representation of the host's user record,
+@@ -1642,6 +1644,9 @@ After=sys-subsystem-net-devices-ens1.device</programlisting>
+         the container's <filename>/etc/passwd</filename> and <filename>/etc/group</filename>, and thus might
+         not detect existing accounts in other databases.</para>
+ 
++        <para>This operation is only supported in combination with
++        <option>--private-users=</option>/<option>-U</option>.</para>
++
+         <xi:include href="version-info.xml" xpointer="v249"/></listitem>
+       </varlistentry>
+ 
+diff --git a/src/basic/forward.h b/src/basic/forward.h
+index 53b217b07b..7175120e5b 100644
+--- a/src/basic/forward.h
++++ b/src/basic/forward.h
+@@ -291,8 +291,6 @@ typedef struct ImagePolicy ImagePolicy;
+ typedef struct InstallInfo InstallInfo;
+ typedef struct LookupPaths LookupPaths;
+ typedef struct LoopDevice LoopDevice;
+-typedef struct MachineBindUserContext MachineBindUserContext;
+-typedef struct MachineCredentialContext MachineCredentialContext;
+ typedef struct MountOptions MountOptions;
+ typedef struct OpenFile OpenFile;
+ typedef struct Pkcs11EncryptedKey Pkcs11EncryptedKey;
+diff --git a/src/nspawn/nspawn-bind-user.c b/src/nspawn/nspawn-bind-user.c
+index d9a06e2c03..8a193d6941 100644
+--- a/src/nspawn/nspawn-bind-user.c
++++ b/src/nspawn/nspawn-bind-user.c
+@@ -1,21 +1,338 @@
+ /* SPDX-License-Identifier: LGPL-2.1-or-later */
+ 
++#include <grp.h>
++#include <pwd.h>
+ #include <unistd.h>
+ 
+-#include "sd-json.h"
+-
+ #include "alloc-util.h"
++#include "chase.h"
++#include "fd-util.h"
+ #include "fileio.h"
+ #include "format-util.h"
++#include "json-util.h"
+ #include "log.h"
++#include "nspawn-mount.h"
+ #include "nspawn.h"
+-#include "machine-bind-user.h"
+ #include "nspawn-bind-user.h"
+-#include "user-record.h"
+-#include "group-record.h"
+ #include "path-util.h"
+ #include "string-util.h"
++#include "strv.h"
+ #include "user-util.h"
++#include "userdb.h"
++
++static int check_etc_passwd_collisions(
++                const char *directory,
++                const char *name,
++                uid_t uid) {
++
++        _cleanup_fclose_ FILE *f = NULL;
++        int r;
++
++        assert(directory);
++        assert(name || uid_is_valid(uid));
++
++        r = chase_and_fopen_unlocked("/etc/passwd", directory, CHASE_PREFIX_ROOT, "re", NULL, &f);
++        if (r == -ENOENT)
++                return 0; /* no user database? then no user, hence no collision */
++        if (r < 0)
++                return log_error_errno(r, "Failed to open /etc/passwd of machine: %m");
++
++        for (;;) {
++                struct passwd *pw;
++
++                r = fgetpwent_sane(f, &pw);
++                if (r < 0)
++                        return log_error_errno(r, "Failed to iterate through /etc/passwd of machine: %m");
++                if (r == 0) /* EOF */
++                        return 0; /* no collision */
++
++                if (name && streq_ptr(pw->pw_name, name))
++                        return 1; /* name collision */
++                if (uid_is_valid(uid) && pw->pw_uid == uid)
++                        return 1; /* UID collision */
++        }
++}
++
++static int check_etc_group_collisions(
++                const char *directory,
++                const char *name,
++                gid_t gid) {
++
++        _cleanup_fclose_ FILE *f = NULL;
++        int r;
++
++        assert(directory);
++        assert(name || gid_is_valid(gid));
++
++        r = chase_and_fopen_unlocked("/etc/group", directory, CHASE_PREFIX_ROOT, "re", NULL, &f);
++        if (r == -ENOENT)
++                return 0; /* no group database? then no group, hence no collision */
++        if (r < 0)
++                return log_error_errno(r, "Failed to open /etc/group of machine: %m");
++
++        for (;;) {
++                struct group *gr;
++
++                r = fgetgrent_sane(f, &gr);
++                if (r < 0)
++                        return log_error_errno(r, "Failed to iterate through /etc/group of machine: %m");
++                if (r == 0)
++                        return 0; /* no collision */
++
++                if (name && streq_ptr(gr->gr_name, name))
++                        return 1; /* name collision */
++                if (gid_is_valid(gid) && gr->gr_gid == gid)
++                        return 1; /* gid collision */
++        }
++}
++
++static int convert_user(
++                const char *directory,
++                UserRecord *u,
++                GroupRecord *g,
++                uid_t allocate_uid,
++                const char *shell,
++                bool shell_copy,
++                UserRecord **ret_converted_user,
++                GroupRecord **ret_converted_group) {
++
++        _cleanup_(group_record_unrefp) GroupRecord *converted_group = NULL;
++        _cleanup_(user_record_unrefp) UserRecord *converted_user = NULL;
++        _cleanup_free_ char *h = NULL;
++        sd_json_variant *p, *hp = NULL, *ssh = NULL;
++        int r;
++
++        assert(u);
++        assert(g);
++        assert(user_record_gid(u) == g->gid);
++
++        if (shell_copy)
++                shell = u->shell;
++
++        r = check_etc_passwd_collisions(directory, u->user_name, UID_INVALID);
++        if (r < 0)
++                return r;
++        if (r > 0)
++                return log_error_errno(SYNTHETIC_ERRNO(EBUSY),
++                                       "Sorry, the user '%s' already exists in the machine.", u->user_name);
++
++        r = check_etc_group_collisions(directory, g->group_name, GID_INVALID);
++        if (r < 0)
++                return r;
++        if (r > 0)
++                return log_error_errno(SYNTHETIC_ERRNO(EBUSY),
++                                       "Sorry, the group '%s' already exists in the machine.", g->group_name);
++
++        h = path_join("/run/host/home/", u->user_name);
++        if (!h)
++                return log_oom();
++
++        /* Acquire the source hashed password array as-is, so that it retains the JSON_VARIANT_SENSITIVE flag */
++        p = sd_json_variant_by_key(u->json, "privileged");
++        if (p) {
++                hp = sd_json_variant_by_key(p, "hashedPassword");
++                ssh = sd_json_variant_by_key(p, "sshAuthorizedKeys");
++        }
++
++        r = user_record_build(
++                        &converted_user,
++                        SD_JSON_BUILD_OBJECT(
++                                        SD_JSON_BUILD_PAIR("userName", SD_JSON_BUILD_STRING(u->user_name)),
++                                        SD_JSON_BUILD_PAIR("uid", SD_JSON_BUILD_UNSIGNED(allocate_uid)),
++                                        SD_JSON_BUILD_PAIR("gid", SD_JSON_BUILD_UNSIGNED(allocate_uid)),
++                                        SD_JSON_BUILD_PAIR_CONDITION(u->disposition >= 0, "disposition", SD_JSON_BUILD_STRING(user_disposition_to_string(u->disposition))),
++                                        SD_JSON_BUILD_PAIR("homeDirectory", SD_JSON_BUILD_STRING(h)),
++                                        SD_JSON_BUILD_PAIR("service", JSON_BUILD_CONST_STRING("io.systemd.NSpawn")),
++                                        JSON_BUILD_PAIR_STRING_NON_EMPTY("shell", shell),
++                                        SD_JSON_BUILD_PAIR("privileged", SD_JSON_BUILD_OBJECT(
++                                                                           SD_JSON_BUILD_PAIR_CONDITION(!strv_isempty(u->hashed_password), "hashedPassword", SD_JSON_BUILD_VARIANT(hp)),
++                                                                           SD_JSON_BUILD_PAIR_CONDITION(!!ssh, "sshAuthorizedKeys", SD_JSON_BUILD_VARIANT(ssh))))));
++        if (r < 0)
++                return log_error_errno(r, "Failed to build machine user record: %m");
++
++        r = group_record_build(
++                        &converted_group,
++                        SD_JSON_BUILD_OBJECT(
++                                        SD_JSON_BUILD_PAIR("groupName", SD_JSON_BUILD_STRING(g->group_name)),
++                                        SD_JSON_BUILD_PAIR("gid", SD_JSON_BUILD_UNSIGNED(allocate_uid)),
++                                        SD_JSON_BUILD_PAIR_CONDITION(g->disposition >= 0, "disposition", SD_JSON_BUILD_STRING(user_disposition_to_string(g->disposition))),
++                                        SD_JSON_BUILD_PAIR("service", JSON_BUILD_CONST_STRING("io.systemd.NSpawn"))));
++        if (r < 0)
++                return log_error_errno(r, "Failed to build machine group record: %m");
++
++        *ret_converted_user = TAKE_PTR(converted_user);
++        *ret_converted_group = TAKE_PTR(converted_group);
++
++        return 0;
++}
++
++static int find_free_uid(const char *directory, uid_t max_uid, uid_t *current_uid) {
++        int r;
++
++        assert(directory);
++        assert(current_uid);
++
++        for (;; (*current_uid)++) {
++                if (*current_uid > MAP_UID_MAX || *current_uid > max_uid)
++                        return log_error_errno(
++                                        SYNTHETIC_ERRNO(EBUSY),
++                                        "No suitable available UID in range " UID_FMT "…" UID_FMT " in machine detected, can't map user.",
++                                        MAP_UID_MIN, MAP_UID_MAX);
++
++                r = check_etc_passwd_collisions(directory, NULL, *current_uid);
++                if (r < 0)
++                        return r;
++                if (r > 0) /* already used */
++                        continue;
++
++                /* We want to use the UID also as GID, hence check for it in /etc/group too */
++                r = check_etc_group_collisions(directory, NULL, (gid_t) *current_uid);
++                if (r <= 0)
++                        return r;
++        }
++}
++
++BindUserContext* bind_user_context_free(BindUserContext *c) {
++        if (!c)
++                return NULL;
++
++        FOREACH_ARRAY(d, c->data, c->n_data) {
++                user_record_unref(d->host_user);
++                group_record_unref(d->host_group);
++                user_record_unref(d->payload_user);
++                group_record_unref(d->payload_group);
++        }
++
++        return mfree(c);
++}
++
++int bind_user_prepare(
++                const char *directory,
++                char **bind_user,
++                const char *bind_user_shell,
++                bool bind_user_shell_copy,
++                uid_t uid_shift,
++                uid_t uid_range,
++                CustomMount **custom_mounts,
++                size_t *n_custom_mounts,
++                BindUserContext **ret) {
++
++        _cleanup_(bind_user_context_freep) BindUserContext *c = NULL;
++        uid_t current_uid = MAP_UID_MIN;
++        int r;
++
++        assert(custom_mounts);
++        assert(n_custom_mounts);
++        assert(ret);
++
++        /* This resolves the users specified in 'bind_user', generates a minimalized JSON user + group record
++         * for it to stick in the machine, allocates a UID/GID for it, and updates the custom mount table,
++         * to include an appropriate bind mount mapping.
++         *
++         * This extends the passed custom_mounts/n_custom_mounts with the home directories, and allocates a
++         * new BindUserContext for the user records */
++
++        if (strv_isempty(bind_user)) {
++                *ret = NULL;
++                return 0;
++        }
++
++        c = new0(BindUserContext, 1);
++        if (!c)
++                return log_oom();
++
++        STRV_FOREACH(n, bind_user) {
++                _cleanup_(user_record_unrefp) UserRecord *u = NULL, *cu = NULL;
++                _cleanup_(group_record_unrefp) GroupRecord *g = NULL, *cg = NULL;
++                _cleanup_free_ char *sm = NULL, *sd = NULL;
++
++                r = userdb_by_name(*n, /* match= */ NULL, USERDB_DONT_SYNTHESIZE_INTRINSIC|USERDB_DONT_SYNTHESIZE_FOREIGN, &u);
++                if (r < 0)
++                        return log_error_errno(r, "Failed to resolve user '%s': %m", *n);
++
++                /* For now, let's refuse mapping the root/nobody users explicitly. The records we generate
++                 * are strictly additive, nss-systemd is typically placed last in /etc/nsswitch.conf. Thus
++                 * even if we wanted, we couldn't override the root or nobody user records. Note we also
++                 * check for name conflicts in /etc/passwd + /etc/group later on, which would usually filter
++                 * out root/nobody too, hence these checks might appear redundant — but they actually are
++                 * not, as we want to support environments where /etc/passwd and /etc/group are non-existent,
++                 * and the user/group databases fully synthesized at runtime. Moreover, the name of the
++                 * user/group name of the "nobody" account differs between distros, hence a check by numeric
++                 * UID is safer. */
++                if (user_record_is_root(u))
++                        return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Mapping 'root' user not supported, sorry.");
++
++                if (user_record_is_nobody(u))
++                        return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Mapping 'nobody' user not supported, sorry.");
++
++                if (!uid_is_valid(u->uid))
++                        return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Cannot bind user with no UID, refusing.");
++
++                if (u->uid >= uid_shift && u->uid < uid_shift + uid_range)
++                        return log_error_errno(
++                                        SYNTHETIC_ERRNO(EINVAL),
++                                        "UID "UID_FMT" of user '%s' to map is already in machine UID range ("UID_FMT" - "UID_FMT"), refusing.",
++                                        u->uid, u->user_name, uid_shift, uid_shift + uid_range);
++
++                r = groupdb_by_gid(user_record_gid(u), /* match= */ NULL, USERDB_DONT_SYNTHESIZE_INTRINSIC|USERDB_DONT_SYNTHESIZE_FOREIGN, &g);
++                if (r < 0)
++                        return log_error_errno(r, "Failed to resolve group of user '%s': %m", u->user_name);
++
++                if (g->gid >= uid_shift && g->gid < uid_shift + uid_range)
++                        return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "GID of group '%s' to map is already in machine GID range, refusing.", g->group_name);
++
++                /* We want to synthesize exactly one user + group from the host into the machine. This only
++                 * makes sense if the user on the host has its own private group. We can't reasonably check
++                 * this, so we just check of the name of user and group match.
++                 *
++                 * One of these days we might want to support users in a shared/common group too, but it's
++                 * not clear to me how this would have to be mapped, precisely given that the common group
++                 * probably already exists in the machine. */
++                if (!streq(u->user_name, g->group_name))
++                        return log_error_errno(SYNTHETIC_ERRNO(EOPNOTSUPP),
++                                               "Sorry, mapping users without private groups is currently not supported.");
++
++                r = find_free_uid(directory, uid_range, &current_uid);
++                if (r < 0)
++                        return r;
++
++                r = convert_user(directory, u, g, current_uid, bind_user_shell, bind_user_shell_copy, &cu, &cg);
++                if (r < 0)
++                        return r;
++
++                if (!GREEDY_REALLOC(c->data, c->n_data + 1))
++                        return log_oom();
++
++                sm = strdup(user_record_home_directory(u));
++                if (!sm)
++                        return log_oom();
++
++                sd = strdup(user_record_home_directory(cu));
++                if (!sd)
++                        return log_oom();
++
++                if (!GREEDY_REALLOC(*custom_mounts, *n_custom_mounts + 1))
++                        return log_oom();
++
++                (*custom_mounts)[(*n_custom_mounts)++] = (CustomMount) {
++                        .type = CUSTOM_MOUNT_BIND,
++                        .source = TAKE_PTR(sm),
++                        .destination = TAKE_PTR(sd),
++                };
++
++                c->data[c->n_data++] = (BindUserData) {
++                        .host_user = TAKE_PTR(u),
++                        .host_group = TAKE_PTR(g),
++                        .payload_user = TAKE_PTR(cu),
++                        .payload_group = TAKE_PTR(cg),
++                };
++
++                current_uid++;
++        }
++
++        *ret = TAKE_PTR(c);
++        return 1;
++}
+ 
+ static int write_and_symlink(
+                 const char *root,
+@@ -67,7 +384,10 @@ static int write_and_symlink(
+         return 0;
+ }
+ 
+-int bind_user_setup(const MachineBindUserContext *c, const char *root) {
++int bind_user_setup(
++                const BindUserContext *c,
++                const char *root) {
++
+         static const UserRecordLoadFlags strip_flags = /* Removes privileged info */
+                 USER_RECORD_LOAD_MASK_PRIVILEGED|
+                 USER_RECORD_PERMISSIVE;
+diff --git a/src/nspawn/nspawn-bind-user.h b/src/nspawn/nspawn-bind-user.h
+index 682784f52b..cb4d246bec 100644
+--- a/src/nspawn/nspawn-bind-user.h
++++ b/src/nspawn/nspawn-bind-user.h
+@@ -3,4 +3,27 @@
+ 
+ #include "forward.h"
+ 
+-int bind_user_setup(const MachineBindUserContext *c, const char *root);
++typedef struct CustomMount CustomMount;
++
++typedef struct BindUserData {
++        /* The host's user/group records */
++        UserRecord *host_user;
++        GroupRecord *host_group;
++
++        /* The mapped records to place into the container */
++        UserRecord *payload_user;
++        GroupRecord *payload_group;
++} BindUserData;
++
++typedef struct BindUserContext {
++        BindUserData *data;
++        size_t n_data;
++} BindUserContext;
++
++BindUserContext* bind_user_context_free(BindUserContext *c);
++
++DEFINE_TRIVIAL_CLEANUP_FUNC(BindUserContext*, bind_user_context_free);
++
++int bind_user_prepare(const char *directory, char **bind_user, const char *bind_user_shell, bool bind_user_shell_copy, uid_t uid_shift, uid_t uid_range, CustomMount **custom_mounts, size_t *n_custom_mounts, BindUserContext **ret);
++
++int bind_user_setup(const BindUserContext *c, const char *root);
+diff --git a/src/nspawn/nspawn-mount.c b/src/nspawn/nspawn-mount.c
+index 56870a341f..2bda3e6fa8 100644
+--- a/src/nspawn/nspawn-mount.c
++++ b/src/nspawn/nspawn-mount.c
+@@ -25,7 +25,6 @@
+ #include "string-util.h"
+ #include "strv.h"
+ #include "tmpfile-util.h"
+-#include "user-util.h"
+ 
+ CustomMount* custom_mount_add(CustomMount **l, size_t *n, CustomMountType t) {
+         CustomMount *ret;
+@@ -42,8 +41,7 @@ CustomMount* custom_mount_add(CustomMount **l, size_t *n, CustomMountType t) {
+         (*n)++;
+ 
+         *ret = (CustomMount) {
+-                .type = t,
+-                .destination_uid = UID_INVALID,
++                .type = t
+         };
+ 
+         return ret;
+@@ -851,7 +849,7 @@ static int mount_bind(const char *dest, CustomMount *m, uid_t uid_shift, uid_t u
+                 if (stat(where, &dest_st) < 0)
+                         return log_error_errno(errno, "Failed to stat %s: %m", where);
+ 
+-                dest_uid = uid_is_valid(m->destination_uid) ? uid_shift + m->destination_uid : dest_st.st_uid;
++                dest_uid = dest_st.st_uid;
+ 
+                 if (S_ISDIR(source_st.st_mode) && !S_ISDIR(dest_st.st_mode))
+                         return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
+@@ -882,7 +880,7 @@ static int mount_bind(const char *dest, CustomMount *m, uid_t uid_shift, uid_t u
+                 if (chown(where, uid_shift, uid_shift) < 0)
+                         return log_error_errno(errno, "Failed to chown %s: %m", where);
+ 
+-                dest_uid = uid_shift + (uid_is_valid(m->destination_uid) ? m->destination_uid : 0);
++                dest_uid = uid_shift;
+         }
+ 
+         if (move_mount(fd_clone, "", AT_FDCWD, where, MOVE_MOUNT_F_EMPTY_PATH) < 0)
+diff --git a/src/nspawn/nspawn-mount.h b/src/nspawn/nspawn-mount.h
+index f049cf4aee..26b2380dcb 100644
+--- a/src/nspawn/nspawn-mount.h
++++ b/src/nspawn/nspawn-mount.h
+@@ -38,7 +38,6 @@ typedef struct CustomMount {
+         bool read_only;
+         char *source; /* for overlayfs this is the upper directory */
+         char *destination;
+-        uid_t destination_uid;
+         char *options;
+         char *work_dir;
+         char **lower;
+diff --git a/src/nspawn/nspawn.c b/src/nspawn/nspawn.c
+index 811210061b..b1c7b841e3 100644
+--- a/src/nspawn/nspawn.c
++++ b/src/nspawn/nspawn.c
+@@ -34,6 +34,7 @@
+ #include "capability-list.h"
+ #include "capability-util.h"
+ #include "cgroup-setup.h"
++#include "cgroup-util.h"
+ #include "chase.h"
+ #include "common-signal.h"
+ #include "constants.h"
+@@ -54,6 +55,7 @@
+ #include "format-util.h"
+ #include "fs-util.h"
+ #include "gpt.h"
++#include "group-record.h"
+ #include "hexdecoct.h"
+ #include "hostname-setup.h"
+ #include "hostname-util.h"
+@@ -64,7 +66,6 @@
+ #include "log.h"
+ #include "loop-util.h"
+ #include "loopback-setup.h"
+-#include "machine-bind-user.h"
+ #include "machine-credential.h"
+ #include "main-func.h"
+ #include "mkdir.h"
+@@ -1732,6 +1733,9 @@ static int verify_arguments(void) {
+                         return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "AmbientCapability= setting is not useful for boot mode.");
+         }
+ 
++        if (arg_userns_mode == USER_NAMESPACE_NO && !strv_isempty(arg_bind_user))
++                return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "--bind-user= requires --private-users");
++
+         /* Drop duplicate --bind-user= entries */
+         strv_uniq(arg_bind_user);
+ 
+@@ -2702,7 +2706,6 @@ static int setup_journal(const char *directory, uid_t uid_shift, uid_t uid_range
+                                 .options = (char*) (uid_is_valid(uid_shift) ? "rootidmap" : NULL),
+                                 .source = p,
+                                 .destination = p,
+-                                .destination_uid = UID_INVALID,
+                         },
+                         /* n = */ 1,
+                         uid_shift,
+@@ -3885,6 +3888,7 @@ static int outer_child(
+                 int netns_fd,
+                 const char *unix_export_path) {
+ 
++        _cleanup_(bind_user_context_freep) BindUserContext *bind_user_context = NULL;
+         _cleanup_strv_free_ char **os_release_pairs = NULL;
+         bool idmap = false;
+         ssize_t l;
+@@ -4049,41 +4053,38 @@ static int outer_child(
+         if (r < 0)
+                 return r;
+ 
+-        _cleanup_(machine_bind_user_context_freep) MachineBindUserContext *bind_user_context = NULL;
+-        r = machine_bind_user_prepare(
++        r = bind_user_prepare(
+                         directory,
+                         arg_bind_user,
+                         arg_bind_user_shell,
+                         arg_bind_user_shell_copy,
++                        chown_uid,
++                        chown_range,
++                        &arg_custom_mounts, &arg_n_custom_mounts,
+                         &bind_user_context);
+         if (r < 0)
+                 return r;
+ 
+-        if (bind_user_context)
+-                FOREACH_ARRAY(bind_user, bind_user_context->data, bind_user_context->n_data) {
+-                        _cleanup_free_ char *sm = strdup(user_record_home_directory(bind_user->host_user));
+-                        if (!sm)
+-                                return log_oom();
+-
+-                        _cleanup_free_ char *sd = strdup(user_record_home_directory(bind_user->payload_user));
+-                        if (!sd)
+-                                return log_oom();
+-
+-                        if (!GREEDY_REALLOC(arg_custom_mounts, arg_n_custom_mounts + 1))
+-                                return log_oom();
+-
+-                        char *options = strdup("owneridmap");
+-                        if (!options)
+-                                return log_oom();
++        if (arg_userns_mode != USER_NAMESPACE_NO && bind_user_context) {
++                /* Send the user maps we determined to the parent, so that it installs it in our user
++                 * namespace UID map table */
+ 
+-                        arg_custom_mounts[arg_n_custom_mounts++] = (CustomMount) {
+-                                .type = CUSTOM_MOUNT_BIND,
+-                                .source = TAKE_PTR(sm),
+-                                .destination = TAKE_PTR(sd),
+-                                .options = TAKE_PTR(options),
+-                                .destination_uid = bind_user->payload_user->uid,
++                FOREACH_ARRAY(d, bind_user_context->data, bind_user_context->n_data) {
++                        uid_t map[] = {
++                                d->payload_user->uid,
++                                d->host_user->uid,
++                                (uid_t) d->payload_group->gid,
++                                (uid_t) d->host_group->gid,
+                         };
++
++                        l = send(fd_outer_socket, map, sizeof(map), MSG_NOSIGNAL);
++                        if (l < 0)
++                                return log_error_errno(errno, "Failed to send user UID map: %m");
++                        if (l != sizeof(map))
++                                return log_error_errno(SYNTHETIC_ERRNO(EIO),
++                                                       "Short write while sending user UID map.");
+                 }
++        }
+ 
+         r = mount_custom(
+                         directory,
+@@ -4501,6 +4502,69 @@ static int uid_shift_pick(uid_t *shift, LockFile *ret_lock_file) {
+         }
+ }
+ 
++static int add_one_uid_map(
++                char **p,
++                uid_t container_uid,
++                uid_t host_uid,
++                uid_t range) {
++
++        return strextendf(p,
++                       UID_FMT " " UID_FMT " " UID_FMT "\n",
++                       container_uid, host_uid, range);
++}
++
++static int make_uid_map_string(
++                const uid_t bind_user_uid[],
++                size_t n_bind_user_uid,
++                size_t offset,
++                char **ret) {
++
++        _cleanup_free_ char *s = NULL;
++        uid_t previous_uid = 0;
++        int r;
++
++        assert(n_bind_user_uid == 0 || bind_user_uid);
++        assert(IN_SET(offset, 0, 2)); /* used to switch between UID and GID map */
++        assert(ret);
++
++        /* The bind_user_uid[] array is a series of 4 uid_t values, for each --bind-user= entry one
++         * quadruplet, consisting of host and container UID + GID. */
++
++        for (size_t i = 0; i < n_bind_user_uid; i++) {
++                uid_t payload_uid = bind_user_uid[i*4+offset],
++                        host_uid = bind_user_uid[i*4+offset+1];
++
++                assert(previous_uid <= payload_uid);
++                assert(payload_uid < arg_uid_range);
++
++                /* Add a range to close the gap to previous entry */
++                if (payload_uid > previous_uid) {
++                        r = add_one_uid_map(&s, previous_uid, arg_uid_shift + previous_uid, payload_uid - previous_uid);
++                        if (r < 0)
++                                return r;
++                }
++
++                /* Map this specific user */
++                r = add_one_uid_map(&s, payload_uid, host_uid, 1);
++                if (r < 0)
++                        return r;
++
++                previous_uid = payload_uid + 1;
++        }
++
++        /* And add a range to close the gap to finish the range */
++        if (arg_uid_range > previous_uid) {
++                r = add_one_uid_map(&s, previous_uid, arg_uid_shift + previous_uid, arg_uid_range - previous_uid);
++                if (r < 0)
++                        return r;
++        }
++
++        assert(s);
++
++        *ret = TAKE_PTR(s);
++        return 0;
++}
++
+ static int setup_uid_map(
+                 const PidRef *pid,
+                 const uid_t bind_user_uid[],
+@@ -4513,7 +4577,8 @@ static int setup_uid_map(
+         assert(pidref_is_set(pid));
+         assert(pid->pid > 1);
+ 
+-        if (asprintf(&s, "0 " UID_FMT " " UID_FMT "\n", arg_uid_shift, arg_uid_range) < 0)
++        /* Build the UID map string */
++        if (make_uid_map_string(bind_user_uid, n_bind_user_uid, 0, &s) < 0) /* offset=0 contains the UID pair */
+                 return log_oom();
+ 
+         xsprintf(uid_map, "/proc/" PID_FMT "/uid_map", pid->pid);
+@@ -4521,6 +4586,11 @@ static int setup_uid_map(
+         if (r < 0)
+                 return log_error_errno(r, "Failed to write UID map: %m");
+ 
++        /* And now build the GID map string */
++        s = mfree(s);
++        if (make_uid_map_string(bind_user_uid, n_bind_user_uid, 2, &s) < 0) /* offset=2 contains the GID pair */
++                return log_oom();
++
+         xsprintf(uid_map, "/proc/" PID_FMT "/gid_map", pid->pid);
+         r = write_string_file(uid_map, s, WRITE_STRING_FILE_DISABLE_BUFFER);
+         if (r < 0)
+@@ -5254,6 +5324,26 @@ static int run_container(
+                         if (l != sizeof arg_uid_shift)
+                                 return log_error_errno(SYNTHETIC_ERRNO(EIO), "Short write while writing UID shift.");
+                 }
++
++                n_bind_user_uid = strv_length(arg_bind_user);
++                if (n_bind_user_uid > 0) {
++                        /* Right after the UID shift, we'll receive the list of UID mappings for the
++                         * --bind-user= logic. Always a quadruplet of payload and host UID + GID. */
++
++                        bind_user_uid = new(uid_t, n_bind_user_uid*4);
++                        if (!bind_user_uid)
++                                return log_oom();
++
++                        for (size_t i = 0; i < n_bind_user_uid; i++) {
++                                l = recv(fd_outer_socket_pair[0], bind_user_uid + i*4, sizeof(uid_t)*4, 0);
++                                if (l < 0)
++                                        return log_error_errno(errno, "Failed to read user UID map pair: %m");
++                                if (l != sizeof(uid_t)*4)
++                                        return log_full_errno(l == 0 ? LOG_DEBUG : LOG_WARNING,
++                                                              SYNTHETIC_ERRNO(EIO),
++                                                              "Short read while reading bind user UID pairs.");
++                        }
++                }
+         }
+ 
+         /* Wait for the outer child. */
+diff --git a/src/shared/machine-bind-user.c b/src/shared/machine-bind-user.c
+deleted file mode 100644
+index 72b950210e..0000000000
+--- a/src/shared/machine-bind-user.c
++++ /dev/null
+@@ -1,302 +0,0 @@
+-/* SPDX-License-Identifier: LGPL-2.1-or-later */
+-
+-#include <grp.h>
+-#include <pwd.h>
+-#include <unistd.h>
+-
+-#include "alloc-util.h"
+-#include "chase.h"
+-#include "fd-util.h"
+-#include "format-util.h"
+-#include "json-util.h"
+-#include "log.h"
+-#include "machine-bind-user.h"
+-#include "path-util.h"
+-#include "string-util.h"
+-#include "strv.h"
+-#include "user-util.h"
+-#include "userdb.h"
+-
+-static int check_etc_passwd_collisions(
+-                const char *directory,
+-                const char *name,
+-                uid_t uid) {
+-
+-        _cleanup_fclose_ FILE *f = NULL;
+-        int r;
+-
+-        assert(name || uid_is_valid(uid));
+-
+-        if (!directory)
+-                return 0;
+-
+-        r = chase_and_fopen_unlocked("/etc/passwd", directory, CHASE_PREFIX_ROOT, "re", NULL, &f);
+-        if (r == -ENOENT)
+-                return 0; /* no user database? then no user, hence no collision */
+-        if (r < 0)
+-                return log_error_errno(r, "Failed to open /etc/passwd of machine: %m");
+-
+-        for (;;) {
+-                struct passwd *pw;
+-
+-                r = fgetpwent_sane(f, &pw);
+-                if (r < 0)
+-                        return log_error_errno(r, "Failed to iterate through /etc/passwd of machine: %m");
+-                if (r == 0) /* EOF */
+-                        return 0; /* no collision */
+-
+-                if (name && streq_ptr(pw->pw_name, name))
+-                        return 1; /* name collision */
+-                if (uid_is_valid(uid) && pw->pw_uid == uid)
+-                        return 1; /* UID collision */
+-        }
+-}
+-
+-static int check_etc_group_collisions(
+-                const char *directory,
+-                const char *name,
+-                gid_t gid) {
+-
+-        _cleanup_fclose_ FILE *f = NULL;
+-        int r;
+-
+-        assert(name || gid_is_valid(gid));
+-
+-        if (!directory)
+-                return 0;
+-
+-        r = chase_and_fopen_unlocked("/etc/group", directory, CHASE_PREFIX_ROOT, "re", NULL, &f);
+-        if (r == -ENOENT)
+-                return 0; /* no group database? then no group, hence no collision */
+-        if (r < 0)
+-                return log_error_errno(r, "Failed to open /etc/group of machine: %m");
+-
+-        for (;;) {
+-                struct group *gr;
+-
+-                r = fgetgrent_sane(f, &gr);
+-                if (r < 0)
+-                        return log_error_errno(r, "Failed to iterate through /etc/group of machine: %m");
+-                if (r == 0)
+-                        return 0; /* no collision */
+-
+-                if (name && streq_ptr(gr->gr_name, name))
+-                        return 1; /* name collision */
+-                if (gid_is_valid(gid) && gr->gr_gid == gid)
+-                        return 1; /* gid collision */
+-        }
+-}
+-
+-static int convert_user(
+-                const char *directory,
+-                UserRecord *u,
+-                GroupRecord *g,
+-                uid_t allocate_uid,
+-                const char *shell,
+-                bool shell_copy,
+-                UserRecord **ret_converted_user,
+-                GroupRecord **ret_converted_group) {
+-
+-        _cleanup_(group_record_unrefp) GroupRecord *converted_group = NULL;
+-        _cleanup_(user_record_unrefp) UserRecord *converted_user = NULL;
+-        _cleanup_free_ char *h = NULL;
+-        sd_json_variant *p, *hp = NULL, *ssh = NULL;
+-        int r;
+-
+-        assert(u);
+-        assert(g);
+-        assert(user_record_gid(u) == g->gid);
+-
+-        if (shell_copy)
+-                shell = u->shell;
+-
+-        r = check_etc_passwd_collisions(directory, u->user_name, UID_INVALID);
+-        if (r < 0)
+-                return r;
+-        if (r > 0)
+-                return log_error_errno(SYNTHETIC_ERRNO(EBUSY),
+-                                       "Sorry, the user '%s' already exists in the machine.", u->user_name);
+-
+-        r = check_etc_group_collisions(directory, g->group_name, GID_INVALID);
+-        if (r < 0)
+-                return r;
+-        if (r > 0)
+-                return log_error_errno(SYNTHETIC_ERRNO(EBUSY),
+-                                       "Sorry, the group '%s' already exists in the machine.", g->group_name);
+-
+-        h = path_join("/run/host/home/", u->user_name);
+-        if (!h)
+-                return log_oom();
+-
+-        /* Acquire the source hashed password array as-is, so that it retains the JSON_VARIANT_SENSITIVE flag */
+-        p = sd_json_variant_by_key(u->json, "privileged");
+-        if (p) {
+-                hp = sd_json_variant_by_key(p, "hashedPassword");
+-                ssh = sd_json_variant_by_key(p, "sshAuthorizedKeys");
+-        }
+-
+-        r = user_record_build(
+-                        &converted_user,
+-                        SD_JSON_BUILD_OBJECT(
+-                                        SD_JSON_BUILD_PAIR("userName", SD_JSON_BUILD_STRING(u->user_name)),
+-                                        SD_JSON_BUILD_PAIR("uid", SD_JSON_BUILD_UNSIGNED(allocate_uid)),
+-                                        SD_JSON_BUILD_PAIR("gid", SD_JSON_BUILD_UNSIGNED(allocate_uid)),
+-                                        SD_JSON_BUILD_PAIR_CONDITION(u->disposition >= 0, "disposition", SD_JSON_BUILD_STRING(user_disposition_to_string(u->disposition))),
+-                                        SD_JSON_BUILD_PAIR("homeDirectory", SD_JSON_BUILD_STRING(h)),
+-                                        SD_JSON_BUILD_PAIR("service", JSON_BUILD_CONST_STRING("io.systemd.NSpawn")),
+-                                        JSON_BUILD_PAIR_STRING_NON_EMPTY("shell", shell),
+-                                        SD_JSON_BUILD_PAIR("privileged", SD_JSON_BUILD_OBJECT(
+-                                                                           SD_JSON_BUILD_PAIR_CONDITION(!strv_isempty(u->hashed_password), "hashedPassword", SD_JSON_BUILD_VARIANT(hp)),
+-                                                                           SD_JSON_BUILD_PAIR_CONDITION(!!ssh, "sshAuthorizedKeys", SD_JSON_BUILD_VARIANT(ssh))))));
+-        if (r < 0)
+-                return log_error_errno(r, "Failed to build machine user record: %m");
+-
+-        r = group_record_build(
+-                        &converted_group,
+-                        SD_JSON_BUILD_OBJECT(
+-                                        SD_JSON_BUILD_PAIR("groupName", SD_JSON_BUILD_STRING(g->group_name)),
+-                                        SD_JSON_BUILD_PAIR("gid", SD_JSON_BUILD_UNSIGNED(allocate_uid)),
+-                                        SD_JSON_BUILD_PAIR_CONDITION(g->disposition >= 0, "disposition", SD_JSON_BUILD_STRING(user_disposition_to_string(g->disposition))),
+-                                        SD_JSON_BUILD_PAIR("service", JSON_BUILD_CONST_STRING("io.systemd.NSpawn"))));
+-        if (r < 0)
+-                return log_error_errno(r, "Failed to build machine group record: %m");
+-
+-        *ret_converted_user = TAKE_PTR(converted_user);
+-        *ret_converted_group = TAKE_PTR(converted_group);
+-
+-        return 0;
+-}
+-
+-static int find_free_uid(const char *directory, uid_t *current_uid) {
+-        int r;
+-
+-        assert(current_uid);
+-
+-        for (;; (*current_uid)++) {
+-                if (*current_uid > MAP_UID_MAX)
+-                        return log_error_errno(
+-                                        SYNTHETIC_ERRNO(EBUSY),
+-                                        "No suitable available UID in range " UID_FMT "…" UID_FMT " in machine detected, can't map user.",
+-                                        MAP_UID_MIN, MAP_UID_MAX);
+-
+-                r = check_etc_passwd_collisions(directory, NULL, *current_uid);
+-                if (r < 0)
+-                        return r;
+-                if (r > 0) /* already used */
+-                        continue;
+-
+-                /* We want to use the UID also as GID, hence check for it in /etc/group too */
+-                r = check_etc_group_collisions(directory, NULL, (gid_t) *current_uid);
+-                if (r <= 0)
+-                        return r;
+-        }
+-}
+-
+-MachineBindUserContext* machine_bind_user_context_free(MachineBindUserContext *c) {
+-        if (!c)
+-                return NULL;
+-
+-        FOREACH_ARRAY(d, c->data, c->n_data) {
+-                user_record_unref(d->host_user);
+-                group_record_unref(d->host_group);
+-                user_record_unref(d->payload_user);
+-                group_record_unref(d->payload_group);
+-        }
+-
+-        return mfree(c);
+-}
+-
+-int machine_bind_user_prepare(
+-                const char *directory,
+-                char **bind_user,
+-                const char *bind_user_shell,
+-                bool bind_user_shell_copy,
+-                MachineBindUserContext **ret) {
+-
+-        _cleanup_(machine_bind_user_context_freep) MachineBindUserContext *c = NULL;
+-        uid_t current_uid = MAP_UID_MIN;
+-        int r;
+-
+-        assert(ret);
+-
+-        /* This resolves the users specified in 'bind_user', generates a minimalized JSON user + group record
+-         * for it to stick in the machine, allocates a UID/GID for it, and updates the custom mount table,
+-         * to include an appropriate bind mount mapping.
+-         *
+-         * This extends the passed custom_mounts/n_custom_mounts with the home directories, and allocates a
+-         * new BindUserContext for the user records */
+-
+-        if (strv_isempty(bind_user)) {
+-                *ret = NULL;
+-                return 0;
+-        }
+-
+-        c = new0(MachineBindUserContext, 1);
+-        if (!c)
+-                return log_oom();
+-
+-        STRV_FOREACH(n, bind_user) {
+-                _cleanup_(user_record_unrefp) UserRecord *u = NULL, *cu = NULL;
+-                _cleanup_(group_record_unrefp) GroupRecord *g = NULL, *cg = NULL;
+-
+-                r = userdb_by_name(*n, /* match= */ NULL, USERDB_DONT_SYNTHESIZE_INTRINSIC|USERDB_DONT_SYNTHESIZE_FOREIGN, &u);
+-                if (r < 0)
+-                        return log_error_errno(r, "Failed to resolve user '%s': %m", *n);
+-
+-                /* For now, let's refuse mapping the root/nobody users explicitly. The records we generate
+-                 * are strictly additive, nss-systemd is typically placed last in /etc/nsswitch.conf. Thus
+-                 * even if we wanted, we couldn't override the root or nobody user records. Note we also
+-                 * check for name conflicts in /etc/passwd + /etc/group later on, which would usually filter
+-                 * out root/nobody too, hence these checks might appear redundant — but they actually are
+-                 * not, as we want to support environments where /etc/passwd and /etc/group are non-existent,
+-                 * and the user/group databases fully synthesized at runtime. Moreover, the name of the
+-                 * user/group name of the "nobody" account differs between distros, hence a check by numeric
+-                 * UID is safer. */
+-                if (user_record_is_root(u))
+-                        return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Mapping 'root' user not supported, sorry.");
+-
+-                if (user_record_is_nobody(u))
+-                        return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Mapping 'nobody' user not supported, sorry.");
+-
+-                if (!uid_is_valid(u->uid))
+-                        return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Cannot bind user with no UID, refusing.");
+-
+-                r = groupdb_by_gid(user_record_gid(u), /* match= */ NULL, USERDB_DONT_SYNTHESIZE_INTRINSIC|USERDB_DONT_SYNTHESIZE_FOREIGN, &g);
+-                if (r < 0)
+-                        return log_error_errno(r, "Failed to resolve group of user '%s': %m", u->user_name);
+-
+-                /* We want to synthesize exactly one user + group from the host into the machine. This only
+-                 * makes sense if the user on the host has its own private group. We can't reasonably check
+-                 * this, so we just check of the name of user and group match.
+-                 *
+-                 * One of these days we might want to support users in a shared/common group too, but it's
+-                 * not clear to me how this would have to be mapped, precisely given that the common group
+-                 * probably already exists in the machine. */
+-                if (!streq(u->user_name, g->group_name))
+-                        return log_error_errno(SYNTHETIC_ERRNO(EOPNOTSUPP),
+-                                               "Sorry, mapping users without private groups is currently not supported.");
+-
+-                r = find_free_uid(directory, &current_uid);
+-                if (r < 0)
+-                        return r;
+-
+-                r = convert_user(directory, u, g, current_uid, bind_user_shell, bind_user_shell_copy, &cu, &cg);
+-                if (r < 0)
+-                        return r;
+-
+-                if (!GREEDY_REALLOC(c->data, c->n_data + 1))
+-                        return log_oom();
+-
+-                c->data[c->n_data++] = (MachineBindUserData) {
+-                        .host_user = TAKE_PTR(u),
+-                        .host_group = TAKE_PTR(g),
+-                        .payload_user = TAKE_PTR(cu),
+-                        .payload_group = TAKE_PTR(cg),
+-                };
+-
+-                current_uid++;
+-        }
+-
+-        *ret = TAKE_PTR(c);
+-        return 1;
+-}
+diff --git a/src/shared/machine-bind-user.h b/src/shared/machine-bind-user.h
+deleted file mode 100644
+index c0a74a704f..0000000000
+--- a/src/shared/machine-bind-user.h
++++ /dev/null
+@@ -1,30 +0,0 @@
+-/* SPDX-License-Identifier: LGPL-2.1-or-later */
+-#pragma once
+-
+-#include "forward.h"
+-
+-typedef struct MachineBindUserData {
+-        /* The host's user/group records */
+-        UserRecord *host_user;
+-        GroupRecord *host_group;
+-
+-        /* The mapped records to place into the container */
+-        UserRecord *payload_user;
+-        GroupRecord *payload_group;
+-} MachineBindUserData;
+-
+-typedef struct MachineBindUserContext {
+-        MachineBindUserData *data;
+-        size_t n_data;
+-} MachineBindUserContext;
+-
+-MachineBindUserContext* machine_bind_user_context_free(MachineBindUserContext *c);
+-
+-DEFINE_TRIVIAL_CLEANUP_FUNC(MachineBindUserContext*, machine_bind_user_context_free);
+-
+-int machine_bind_user_prepare(
+-                const char *directory,
+-                char **bind_user,
+-                const char *bind_user_shell,
+-                bool bind_user_shell_copy,
+-                MachineBindUserContext **ret);
+diff --git a/src/shared/meson.build b/src/shared/meson.build
+index 6954490a46..a949cd1ad7 100644
+--- a/src/shared/meson.build
++++ b/src/shared/meson.build
+@@ -120,7 +120,6 @@ shared_sources = files(
+         'loop-util.c',
+         'loopback-setup.c',
+         'lsm-util.c',
+-        'machine-bind-user.c',
+         'machine-credential.c',
+         'machine-id-setup.c',
+         'machine-pool.c',
+
+base-commit: 15bd1496c9b59c1ec8ee05e78c65eeb3f148c898
+-- 
+2.51.2
+
