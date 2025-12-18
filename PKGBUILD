@@ -24,7 +24,7 @@ arch=('x86_64')
 license=('LGPL-2.1-or-later')
 url='https://www.github.com/systemd/systemd'
 makedepends=('acl' 'apparmor' 'cryptsetup' 'docbook-xsl' 'gperf' 'lz4' 'xz' 'pam' 'libelf'
-             'intltool' 'iptables' 'kmod' 'libarchive' 'libcap' 'libidn2' 'libgcrypt'
+             'intltool' 'iptables' 'kmod' 'libarchive' 'libidn2' 'libgcrypt'
              'libmicrohttpd' 'libxcrypt' 'libxslt' 'util-linux' 'linux-api-headers'
              'python-jinja' 'python-lxml' 'quota-tools' 'shadow' 'git'
              'meson' 'libseccomp' 'pcre2' 'audit' 'kexec-tools' 'libxkbcommon'
@@ -199,7 +199,7 @@ package_systemd() {
   )
   depends=("systemd-libs=${pkgver}"
            'acl' 'bash' 'cryptsetup' 'libcryptsetup.so' 'dbus'
-           'dbus-units' 'kbd' 'kmod' 'hwdata' 'libcap'
+           'dbus-units' 'kbd' 'kmod' 'hwdata'
            'libgcrypt' 'libxcrypt' 'libcrypt.so' 'libidn2' 'lz4' 'pam'
            'libelf' 'libseccomp' 'util-linux' 'xz' 'pcre2' 'audit'
            'openssl' 'libcrypto.so' 'libssl.so')
@@ -309,7 +309,7 @@ package_systemd() {
 
 package_systemd-libs() {
   pkgdesc='systemd client libraries'
-  depends=('glibc' 'gcc-libs' 'libcap' 'libgcrypt' 'lz4' 'xz' 'zstd')
+  depends=('glibc' 'gcc-libs' 'libgcrypt' 'lz4' 'xz' 'zstd')
   license+=(
     'CC0-1.0' # siphash
     'GPL-2.0-or-later WITH Linux-syscall-note' # src/basic/linux/*
