@@ -1,6 +1,6 @@
-From b407950db28d7a0f4ce74f19ff97deb157f7893c Mon Sep 17 00:00:00 2001
+From a2e8128e900c9eca18770b4588414e248af04459 Mon Sep 17 00:00:00 2001
 From: Nathan Chancellor <nathan@kernel.org>
-Date: Mon, 10 Nov 2025 16:25:14 -0700
+Date: Mon, 22 Dec 2025 15:40:47 -0700
 Subject: [PATCH] Revert "nspawn: Prepare --bind-user= logic for reuse in
  systemd-vmspawn"
 
@@ -8,35 +8,72 @@ This reverts commit 852de7ed703655ad39321188fb3e8941a7fb8e0d.
 
 Generated with:
 
+  # ac54da0718 ("machine-bind-user: Use machine in log messages instead of container")
   $ git revert --no-commit ac54da0718531bf5b44c8f13c01cd01dac3a5b30
+
+  # def01c7efe ("nspawn/vmspawn: Add --bind-user-group= option")
+  $ git revert --no-commit def01c7efeb2d0af216b692f543dc1c64df26e2b
+
+  # 63855693dc ("nspawn: Prevent invalid UIDs propagating in bind mounts")
+  $ git revert --no-commit 63855693dcd7a41cac86c29a6f48d75313276127
+
+  # af0ae29714 ("machine-bind-user: Make home mount directory configurable")
+  $ git revert --no-commit af0ae29714310f6739d079b3938fef48b33c8768
+
+  # 852de7ed70 ("nspawn: Prepare --bind-user= logic for reuse in systemd-vmspawn")
   $ git revert --no-commit 852de7ed703655ad39321188fb3e8941a7fb8e0d
-  # To deal with .destination_uid added by 88fce09026 ("nspawn: fix --link-journal=host with --private-users=pick and friends")
+
+  # Handle conflict with f102bc3e5f ("tree-wide: Introduce sd-forward.h and shared-forward.h headers")
+  $ git rm src/basic/forward.h
+  $ sed -i -e '/MachineBindUserContext/d' -e '/MachineCredentialContext/d' src/shared/shared-forward.h
+
+  $ git rm src/shared/machine-bind-user.{c,h}
+
+  # Manually resolve conflicts with headers
+  $ vim src/nspawn/nspawn-bind-user.c
+
+  # Deal with .destination_uid added by 88fce09026 ("nspawn: fix --link-journal=host with --private-users=pick and friends")
   $ sed -i '/destination_uid/d' src/nspawn/nspawn.c
-  # To restore ac54da0718531bf5b44c8f13c01cd01dac3a5b30
+
+  # Restore ac54da0718 ("machine-bind-user: Use machine in log messages instead of container")
   $ sed -i 's;container;machine;g' src/nspawn/nspawn-bind-user.c
+
+  # Restore 29d26ebe9a ("nspawn,vmspawn: improve errors for unknown users and groups")
+  $ git sh 29d26ebe9a | string replace -a src/shared/machine-bind-user.c src/nspawn/nspawn-bind-user.c | git ap
+
+  # Restore 7dda32a544 ("shared: prefer using SD_JSON_BUILD_PAIR_* over SD_JSON_BUILD_PAIR()")
+  $ git sh 7dda32a544 -- src/shared/machine-bind-user.c | string replace -a src/shared/machine-bind-user.c src/nspawn/nspawn-bind-user.c | git ap
+
+  $ git dh src/nspawn/nspawn.c src/nspawn/nspawn-bind-user.c
+
+  $ git add src/nspawn/nspawn.c src/nspawn/nspawn-bind-user.c
+
+  $ git commit
 
 Link: https://github.com/systemd/systemd/issues/39037
 Signed-off-by: Nathan Chancellor <nathan@kernel.org>
 ---
- man/systemd-nspawn.xml         |   9 +-
- src/basic/forward.h            |   2 -
- src/nspawn/nspawn-bind-user.c  | 332 ++++++++++++++++++++++++++++++++-
+ man/systemd-nspawn.xml         |  22 +--
+ man/systemd-vmspawn.xml        |  14 --
+ src/nspawn/nspawn-bind-user.c  | 336 ++++++++++++++++++++++++++++++++-
  src/nspawn/nspawn-bind-user.h  |  25 ++-
- src/nspawn/nspawn-mount.c      |   8 +-
+ src/nspawn/nspawn-mount.c      |  25 +--
  src/nspawn/nspawn-mount.h      |   1 -
- src/nspawn/nspawn.c            | 144 +++++++++++---
- src/shared/machine-bind-user.c | 302 ------------------------------
- src/shared/machine-bind-user.h |  30 ---
+ src/nspawn/nspawn.c            | 167 +++++++++++-----
+ src/shared/machine-bind-user.c | 319 -------------------------------
+ src/shared/machine-bind-user.h |  32 ----
  src/shared/meson.build         |   1 -
- 10 files changed, 477 insertions(+), 377 deletions(-)
+ src/shared/shared-forward.h    |   2 -
+ src/vmspawn/vmspawn.c          |  22 +--
+ 12 files changed, 485 insertions(+), 481 deletions(-)
  delete mode 100644 src/shared/machine-bind-user.c
  delete mode 100644 src/shared/machine-bind-user.h
 
 diff --git a/man/systemd-nspawn.xml b/man/systemd-nspawn.xml
-index 4e019ee732..dac81f6e98 100644
+index fc2c0e145b..80af57eb70 100644
 --- a/man/systemd-nspawn.xml
 +++ b/man/systemd-nspawn.xml
-@@ -1605,8 +1605,10 @@ After=sys-subsystem-net-devices-ens1.device</programlisting>
+@@ -1602,8 +1602,10 @@ After=sys-subsystem-net-devices-ens1.device</programlisting>
  
          <orderedlist>
            <listitem><para>The user's home directory is bind mounted from the host into
@@ -49,7 +86,7 @@ index 4e019ee732..dac81f6e98 100644
  
            <listitem><para>A JSON user and group record is generated in <filename>/run/userdb/</filename> that
            describes the mapped user. It contains a minimized representation of the host's user record,
-@@ -1642,6 +1644,9 @@ After=sys-subsystem-net-devices-ens1.device</programlisting>
+@@ -1639,6 +1641,9 @@ After=sys-subsystem-net-devices-ens1.device</programlisting>
          the container's <filename>/etc/passwd</filename> and <filename>/etc/group</filename>, and thus might
          not detect existing accounts in other databases.</para>
  
@@ -59,24 +96,56 @@ index 4e019ee732..dac81f6e98 100644
          <xi:include href="version-info.xml" xpointer="v249"/></listitem>
        </varlistentry>
  
-diff --git a/src/basic/forward.h b/src/basic/forward.h
-index 53b217b07b..7175120e5b 100644
---- a/src/basic/forward.h
-+++ b/src/basic/forward.h
-@@ -291,8 +291,6 @@ typedef struct ImagePolicy ImagePolicy;
- typedef struct InstallInfo InstallInfo;
- typedef struct LookupPaths LookupPaths;
- typedef struct LoopDevice LoopDevice;
--typedef struct MachineBindUserContext MachineBindUserContext;
--typedef struct MachineCredentialContext MachineCredentialContext;
- typedef struct MountOptions MountOptions;
- typedef struct OpenFile OpenFile;
- typedef struct Pkcs11EncryptedKey Pkcs11EncryptedKey;
+@@ -1664,19 +1669,6 @@ After=sys-subsystem-net-devices-ens1.device</programlisting>
+         <xi:include href="version-info.xml" xpointer="v258"/></listitem>
+       </varlistentry>
+ 
+-      <varlistentry>
+-        <term><option>--bind-user-group=<replaceable>NAME</replaceable></option></term>
+-
+-        <listitem><para>When used with <option>--bind-user=</option>, includes the specified group as an
+-        auxiliary group in the user records of users bound into the container. Takes a group name.</para>
+-
+-        <para>Note: This will not check whether the specified groups exist in the container.</para>
+-
+-        <para>This operation is only supported in combination with <option>--bind-user=</option>.</para>
+-
+-        <xi:include href="version-info.xml" xpointer="v259"/></listitem>
+-      </varlistentry>
+-
+       <varlistentry>
+         <term><option>--inaccessible=</option></term>
+ 
+diff --git a/man/systemd-vmspawn.xml b/man/systemd-vmspawn.xml
+index 7fd19671cb..aa203a0120 100644
+--- a/man/systemd-vmspawn.xml
++++ b/man/systemd-vmspawn.xml
+@@ -526,20 +526,6 @@
+ 
+           <xi:include href="version-info.xml" xpointer="v259"/></listitem>
+         </varlistentry>
+-
+-        <varlistentry>
+-          <term><option>--bind-user-group=<replaceable>NAME</replaceable></option></term>
+-
+-          <listitem><para>When used with <option>--bind-user=</option>, includes the specified group as an
+-          auxiliary group in the user records of users bound into the virtual machine. Takes a group name.</para>
+-
+-          <para>Note: This will not check whether the specified groups exist in the virtual machine.</para>
+-
+-          <para>This operation is only supported in combination with <option>--bind-user=</option>.</para>
+-
+-          <xi:include href="version-info.xml" xpointer="v259"/></listitem>
+-        </varlistentry>
+-
+       </variablelist>
+     </refsect2>
+ 
 diff --git a/src/nspawn/nspawn-bind-user.c b/src/nspawn/nspawn-bind-user.c
-index d9a06e2c03..8a193d6941 100644
+index 0211cfe23c..6aa9cd667f 100644
 --- a/src/nspawn/nspawn-bind-user.c
 +++ b/src/nspawn/nspawn-bind-user.c
-@@ -1,21 +1,338 @@
+@@ -1,25 +1,344 @@
  /* SPDX-License-Identifier: LGPL-2.1-or-later */
  
 +#include <grp.h>
@@ -86,16 +155,18 @@ index d9a06e2c03..8a193d6941 100644
 -#include "sd-json.h"
 -
  #include "alloc-util.h"
-+#include "chase.h"
-+#include "fd-util.h"
+ #include "chase.h"
+ #include "fd-util.h"
  #include "fileio.h"
  #include "format-util.h"
+ #include "io-util.h"
 +#include "json-util.h"
  #include "log.h"
 +#include "nspawn-mount.h"
  #include "nspawn.h"
 -#include "machine-bind-user.h"
  #include "nspawn-bind-user.h"
+-#include "strv.h"
 -#include "user-record.h"
 -#include "group-record.h"
  #include "path-util.h"
@@ -221,11 +292,11 @@ index d9a06e2c03..8a193d6941 100644
 +        r = user_record_build(
 +                        &converted_user,
 +                        SD_JSON_BUILD_OBJECT(
-+                                        SD_JSON_BUILD_PAIR("userName", SD_JSON_BUILD_STRING(u->user_name)),
-+                                        SD_JSON_BUILD_PAIR("uid", SD_JSON_BUILD_UNSIGNED(allocate_uid)),
-+                                        SD_JSON_BUILD_PAIR("gid", SD_JSON_BUILD_UNSIGNED(allocate_uid)),
++                                        SD_JSON_BUILD_PAIR_STRING("userName", u->user_name),
++                                        SD_JSON_BUILD_PAIR_UNSIGNED("uid", allocate_uid),
++                                        SD_JSON_BUILD_PAIR_UNSIGNED("gid", allocate_uid),
 +                                        SD_JSON_BUILD_PAIR_CONDITION(u->disposition >= 0, "disposition", SD_JSON_BUILD_STRING(user_disposition_to_string(u->disposition))),
-+                                        SD_JSON_BUILD_PAIR("homeDirectory", SD_JSON_BUILD_STRING(h)),
++                                        SD_JSON_BUILD_PAIR_STRING("homeDirectory", h),
 +                                        SD_JSON_BUILD_PAIR("service", JSON_BUILD_CONST_STRING("io.systemd.NSpawn")),
 +                                        JSON_BUILD_PAIR_STRING_NON_EMPTY("shell", shell),
 +                                        SD_JSON_BUILD_PAIR("privileged", SD_JSON_BUILD_OBJECT(
@@ -237,8 +308,8 @@ index d9a06e2c03..8a193d6941 100644
 +        r = group_record_build(
 +                        &converted_group,
 +                        SD_JSON_BUILD_OBJECT(
-+                                        SD_JSON_BUILD_PAIR("groupName", SD_JSON_BUILD_STRING(g->group_name)),
-+                                        SD_JSON_BUILD_PAIR("gid", SD_JSON_BUILD_UNSIGNED(allocate_uid)),
++                                        SD_JSON_BUILD_PAIR_STRING("groupName", g->group_name),
++                                        SD_JSON_BUILD_PAIR_UNSIGNED("gid", allocate_uid),
 +                                        SD_JSON_BUILD_PAIR_CONDITION(g->disposition >= 0, "disposition", SD_JSON_BUILD_STRING(user_disposition_to_string(g->disposition))),
 +                                        SD_JSON_BUILD_PAIR("service", JSON_BUILD_CONST_STRING("io.systemd.NSpawn"))));
 +        if (r < 0)
@@ -331,8 +402,10 @@ index d9a06e2c03..8a193d6941 100644
 +                _cleanup_free_ char *sm = NULL, *sd = NULL;
 +
 +                r = userdb_by_name(*n, /* match= */ NULL, USERDB_DONT_SYNTHESIZE_INTRINSIC|USERDB_DONT_SYNTHESIZE_FOREIGN, &u);
++                if (r == -ENOEXEC)
++                        return log_error_errno(r, "User '%s' did not pass filter.", *n);
 +                if (r < 0)
-+                        return log_error_errno(r, "Failed to resolve user '%s': %m", *n);
++                        return log_error_errno(r, "Failed to resolve user '%s': %s", *n, STRERROR_USER(r));
 +
 +                /* For now, let's refuse mapping the root/nobody users explicitly. The records we generate
 +                 * are strictly additive, nss-systemd is typically placed last in /etc/nsswitch.conf. Thus
@@ -359,8 +432,11 @@ index d9a06e2c03..8a193d6941 100644
 +                                        u->uid, u->user_name, uid_shift, uid_shift + uid_range);
 +
 +                r = groupdb_by_gid(user_record_gid(u), /* match= */ NULL, USERDB_DONT_SYNTHESIZE_INTRINSIC|USERDB_DONT_SYNTHESIZE_FOREIGN, &g);
++                if (r == -ENOEXEC)
++                        return log_error_errno(r, "Group of user '%s' did not pass filter.", u->user_name);
 +                if (r < 0)
-+                        return log_error_errno(r, "Failed to resolve group of user '%s': %m", u->user_name);
++                        return log_error_errno(r, "Failed to resolve group of user '%s': %s",
++                                               u->user_name, STRERROR_GROUP(r));
 +
 +                if (g->gid >= uid_shift && g->gid < uid_shift + uid_range)
 +                        return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "GID of group '%s' to map is already in machine GID range, refusing.", g->group_name);
@@ -420,7 +496,7 @@ index d9a06e2c03..8a193d6941 100644
  
  static int write_and_symlink(
                  const char *root,
-@@ -67,7 +384,10 @@ static int write_and_symlink(
+@@ -105,7 +424,10 @@ static int write_membership(const char *root, const char *user, const char *grou
          return 0;
  }
  
@@ -433,12 +509,12 @@ index d9a06e2c03..8a193d6941 100644
                  USER_RECORD_LOAD_MASK_PRIVILEGED|
                  USER_RECORD_PERMISSIVE;
 diff --git a/src/nspawn/nspawn-bind-user.h b/src/nspawn/nspawn-bind-user.h
-index 682784f52b..cb4d246bec 100644
+index 0c182dd8d4..d9bc8a8900 100644
 --- a/src/nspawn/nspawn-bind-user.h
 +++ b/src/nspawn/nspawn-bind-user.h
 @@ -3,4 +3,27 @@
  
- #include "forward.h"
+ #include "shared-forward.h"
  
 -int bind_user_setup(const MachineBindUserContext *c, const char *root);
 +typedef struct CustomMount CustomMount;
@@ -466,7 +542,7 @@ index 682784f52b..cb4d246bec 100644
 +
 +int bind_user_setup(const BindUserContext *c, const char *root);
 diff --git a/src/nspawn/nspawn-mount.c b/src/nspawn/nspawn-mount.c
-index 56870a341f..2bda3e6fa8 100644
+index a996b28fce..5b5294c5e9 100644
 --- a/src/nspawn/nspawn-mount.c
 +++ b/src/nspawn/nspawn-mount.c
 @@ -25,7 +25,6 @@
@@ -487,26 +563,61 @@ index 56870a341f..2bda3e6fa8 100644
          };
  
          return ret;
-@@ -851,7 +849,7 @@ static int mount_bind(const char *dest, CustomMount *m, uid_t uid_shift, uid_t u
+@@ -814,20 +812,9 @@ static int mount_bind(const char *dest, CustomMount *m, uid_t uid_shift, uid_t u
+                         return r;
+         }
+ 
+-        /* ID remapping cannot be done if user namespaces are not in use (uid_shift is UID_INVALID).
+-         * Fail if idmapping was explicitly requested in this state. Otherwise, treat UID_INVALID
+-         * as 0 for ownership operations. */
+-        if (idmapping != REMOUNT_IDMAPPING_NONE && !uid_is_valid(uid_shift))
+-                return log_error_errno(
+-                                SYNTHETIC_ERRNO(EINVAL),
+-                                "ID remapping requested for %s, but user namespacing is not enabled.",
+-                                m->source);
+-
+-        uid_t chown_uid = uid_is_valid(uid_shift) ? uid_shift : 0;
+-
+         /* If this is a bind mount from a temporary sources change ownership of the source to the container's
+          * root UID. Otherwise it would always show up as "nobody" if user namespacing is used. */
+-        if (m->rm_rf_tmpdir && chown(m->source, chown_uid, chown_uid) < 0)
++        if (m->rm_rf_tmpdir && chown(m->source, uid_shift, uid_shift) < 0)
+                 return log_error_errno(errno, "Failed to chown %s: %m", m->source);
+ 
+         /* UID/GIDs of idmapped mounts are always resolved in the caller's user namespace. In other
+@@ -861,7 +848,7 @@ static int mount_bind(const char *dest, CustomMount *m, uid_t uid_shift, uid_t u
                  if (stat(where, &dest_st) < 0)
                          return log_error_errno(errno, "Failed to stat %s: %m", where);
  
--                dest_uid = uid_is_valid(m->destination_uid) ? uid_shift + m->destination_uid : dest_st.st_uid;
+-                dest_uid = uid_is_valid(m->destination_uid) ? chown_uid + m->destination_uid : dest_st.st_uid;
 +                dest_uid = dest_st.st_uid;
  
                  if (S_ISDIR(source_st.st_mode) && !S_ISDIR(dest_st.st_mode))
                          return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
-@@ -882,7 +880,7 @@ static int mount_bind(const char *dest, CustomMount *m, uid_t uid_shift, uid_t u
-                 if (chown(where, uid_shift, uid_shift) < 0)
+@@ -874,7 +861,7 @@ static int mount_bind(const char *dest, CustomMount *m, uid_t uid_shift, uid_t u
+                                                m->source, where);
+ 
+         } else { /* Path doesn't exist yet? */
+-                r = mkdir_parents_safe_label(dest, where, 0755, chown_uid, chown_uid, MKDIR_IGNORE_EXISTING);
++                r = mkdir_parents_safe_label(dest, where, 0755, uid_shift, uid_shift, MKDIR_IGNORE_EXISTING);
+                 if (r < 0)
+                         return log_error_errno(r, "Failed to make parents of %s: %m", where);
+ 
+@@ -889,10 +876,10 @@ static int mount_bind(const char *dest, CustomMount *m, uid_t uid_shift, uid_t u
+                 if (r < 0)
+                         return log_error_errno(r, "Failed to create mount point %s: %m", where);
+ 
+-                if (chown(where, chown_uid, chown_uid) < 0)
++                if (chown(where, uid_shift, uid_shift) < 0)
                          return log_error_errno(errno, "Failed to chown %s: %m", where);
  
--                dest_uid = uid_shift + (uid_is_valid(m->destination_uid) ? m->destination_uid : 0);
+-                dest_uid = chown_uid + (uid_is_valid(m->destination_uid) ? m->destination_uid : 0);
 +                dest_uid = uid_shift;
          }
  
          if (move_mount(fd_clone, "", AT_FDCWD, where, MOVE_MOUNT_F_EMPTY_PATH) < 0)
 diff --git a/src/nspawn/nspawn-mount.h b/src/nspawn/nspawn-mount.h
-index f049cf4aee..26b2380dcb 100644
+index 421c5dffff..eca85cdbfc 100644
 --- a/src/nspawn/nspawn-mount.h
 +++ b/src/nspawn/nspawn-mount.h
 @@ -38,7 +38,6 @@ typedef struct CustomMount {
@@ -518,10 +629,10 @@ index f049cf4aee..26b2380dcb 100644
          char *work_dir;
          char **lower;
 diff --git a/src/nspawn/nspawn.c b/src/nspawn/nspawn.c
-index 811210061b..b1c7b841e3 100644
+index e4fccaa3a7..3bae84c81a 100644
 --- a/src/nspawn/nspawn.c
 +++ b/src/nspawn/nspawn.c
-@@ -34,6 +34,7 @@
+@@ -31,6 +31,7 @@
  #include "capability-list.h"
  #include "capability-util.h"
  #include "cgroup-setup.h"
@@ -529,7 +640,7 @@ index 811210061b..b1c7b841e3 100644
  #include "chase.h"
  #include "common-signal.h"
  #include "constants.h"
-@@ -54,6 +55,7 @@
+@@ -52,6 +53,7 @@
  #include "format-util.h"
  #include "fs-util.h"
  #include "gpt.h"
@@ -537,7 +648,7 @@ index 811210061b..b1c7b841e3 100644
  #include "hexdecoct.h"
  #include "hostname-setup.h"
  #include "hostname-util.h"
-@@ -64,7 +66,6 @@
+@@ -63,7 +65,6 @@
  #include "log.h"
  #include "loop-util.h"
  #include "loopback-setup.h"
@@ -545,25 +656,93 @@ index 811210061b..b1c7b841e3 100644
  #include "machine-credential.h"
  #include "main-func.h"
  #include "mkdir.h"
-@@ -1732,6 +1733,9 @@ static int verify_arguments(void) {
+@@ -242,7 +243,6 @@ static MachineCredentialContext arg_credentials = {};
+ static char **arg_bind_user = NULL;
+ static char *arg_bind_user_shell = NULL;
+ static bool arg_bind_user_shell_copy = false;
+-static char **arg_bind_user_groups = NULL;
+ static bool arg_suppress_sync = false;
+ static char *arg_settings_filename = NULL;
+ static Architecture arg_architecture = _ARCHITECTURE_INVALID;
+@@ -286,7 +286,6 @@ STATIC_DESTRUCTOR_REGISTER(arg_cpu_set, cpu_set_done);
+ STATIC_DESTRUCTOR_REGISTER(arg_sysctl, strv_freep);
+ STATIC_DESTRUCTOR_REGISTER(arg_bind_user, strv_freep);
+ STATIC_DESTRUCTOR_REGISTER(arg_bind_user_shell, freep);
+-STATIC_DESTRUCTOR_REGISTER(arg_bind_user_groups, strv_freep);
+ STATIC_DESTRUCTOR_REGISTER(arg_settings_filename, freep);
+ STATIC_DESTRUCTOR_REGISTER(arg_image_policy, image_policy_freep);
+ STATIC_DESTRUCTOR_REGISTER(arg_background, freep);
+@@ -433,8 +432,6 @@ static int help(void) {
+                "     --bind-user=NAME       Bind user from host to container\n"
+                "     --bind-user-shell=BOOL|PATH\n"
+                "                            Configure the shell to use for --bind-user= users\n"
+-               "     --bind-user-group=GROUP\n"
+-               "                            Add an auxiliary group to --bind-user= users\n"
+                "\n%3$sInput/Output:%4$s\n"
+                "     --console=MODE         Select how stdin/stdout/stderr and /dev/console are\n"
+                "                            set up for the container.\n"
+@@ -666,7 +663,6 @@ static int parse_argv(int argc, char *argv[]) {
+                 ARG_LOAD_CREDENTIAL,
+                 ARG_BIND_USER,
+                 ARG_BIND_USER_SHELL,
+-                ARG_BIND_USER_GROUP,
+                 ARG_SUPPRESS_SYNC,
+                 ARG_IMAGE_POLICY,
+                 ARG_BACKGROUND,
+@@ -745,7 +741,6 @@ static int parse_argv(int argc, char *argv[]) {
+                 { "load-credential",        required_argument, NULL, ARG_LOAD_CREDENTIAL        },
+                 { "bind-user",              required_argument, NULL, ARG_BIND_USER              },
+                 { "bind-user-shell",        required_argument, NULL, ARG_BIND_USER_SHELL        },
+-                { "bind-user-group",        required_argument, NULL, ARG_BIND_USER_GROUP        },
+                 { "suppress-sync",          required_argument, NULL, ARG_SUPPRESS_SYNC          },
+                 { "image-policy",           required_argument, NULL, ARG_IMAGE_POLICY           },
+                 { "background",             required_argument, NULL, ARG_BACKGROUND             },
+@@ -1520,15 +1515,6 @@ static int parse_argv(int argc, char *argv[]) {
+                         break;
+                 }
+ 
+-                case ARG_BIND_USER_GROUP:
+-                        if (!valid_user_group_name(optarg, /* flags= */ 0))
+-                                return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Invalid bind user auxiliary group name: %s", optarg);
+-
+-                        if (strv_extend(&arg_bind_user_groups, optarg) < 0)
+-                                return log_oom();
+-
+-                        break;
+-
+                 case ARG_SUPPRESS_SYNC:
+                         r = parse_boolean_argument("--suppress-sync=", optarg, &arg_suppress_sync);
+                         if (r < 0)
+@@ -1704,16 +1690,15 @@ static int verify_arguments(void) {
                          return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "AmbientCapability= setting is not useful for boot mode.");
          }
  
+-        /* Drop duplicate --bind-user= and --bind-user-group= entries */
 +        if (arg_userns_mode == USER_NAMESPACE_NO && !strv_isempty(arg_bind_user))
 +                return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "--bind-user= requires --private-users");
 +
-         /* Drop duplicate --bind-user= entries */
++        /* Drop duplicate --bind-user= entries */
          strv_uniq(arg_bind_user);
+-        strv_uniq(arg_bind_user_groups);
  
-@@ -2702,7 +2706,6 @@ static int setup_journal(const char *directory, uid_t uid_shift, uid_t uid_range
+         if (arg_bind_user_shell && strv_isempty(arg_bind_user))
+                 return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Cannot use --bind-user-shell= without --bind-user=");
+ 
+-        if (!strv_isempty(arg_bind_user_groups) && strv_isempty(arg_bind_user))
+-                return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Cannot use --bind-user-group= without --bind-user=");
+-
+         r = custom_mount_check_all();
+         if (r < 0)
+                 return r;
+@@ -2687,7 +2672,6 @@ static int setup_journal(const char *directory, uid_t uid_shift, uid_t uid_range
                                  .options = (char*) (uid_is_valid(uid_shift) ? "rootidmap" : NULL),
                                  .source = p,
                                  .destination = p,
 -                                .destination_uid = UID_INVALID,
                          },
-                         /* n = */ 1,
+                         /* n= */ 1,
                          uid_shift,
-@@ -3885,6 +3888,7 @@ static int outer_child(
+@@ -3871,6 +3855,7 @@ static int outer_child(
                  int netns_fd,
                  const char *unix_export_path) {
  
@@ -571,7 +750,7 @@ index 811210061b..b1c7b841e3 100644
          _cleanup_strv_free_ char **os_release_pairs = NULL;
          bool idmap = false;
          ssize_t l;
-@@ -4049,41 +4053,38 @@ static int outer_child(
+@@ -4035,43 +4020,38 @@ static int outer_child(
          if (r < 0)
                  return r;
  
@@ -582,6 +761,8 @@ index 811210061b..b1c7b841e3 100644
                          arg_bind_user,
                          arg_bind_user_shell,
                          arg_bind_user_shell_copy,
+-                        "/run/host/home",
+-                        arg_bind_user_groups,
 +                        chown_uid,
 +                        chown_range,
 +                        &arg_custom_mounts, &arg_n_custom_mounts,
@@ -634,7 +815,7 @@ index 811210061b..b1c7b841e3 100644
  
          r = mount_custom(
                          directory,
-@@ -4501,6 +4502,69 @@ static int uid_shift_pick(uid_t *shift, LockFile *ret_lock_file) {
+@@ -4492,6 +4472,69 @@ static int uid_shift_pick(uid_t *shift, LockFile *ret_lock_file) {
          }
  }
  
@@ -704,7 +885,7 @@ index 811210061b..b1c7b841e3 100644
  static int setup_uid_map(
                  const PidRef *pid,
                  const uid_t bind_user_uid[],
-@@ -4513,7 +4577,8 @@ static int setup_uid_map(
+@@ -4504,7 +4547,8 @@ static int setup_uid_map(
          assert(pidref_is_set(pid));
          assert(pid->pid > 1);
  
@@ -714,7 +895,7 @@ index 811210061b..b1c7b841e3 100644
                  return log_oom();
  
          xsprintf(uid_map, "/proc/" PID_FMT "/uid_map", pid->pid);
-@@ -4521,6 +4586,11 @@ static int setup_uid_map(
+@@ -4512,6 +4556,11 @@ static int setup_uid_map(
          if (r < 0)
                  return log_error_errno(r, "Failed to write UID map: %m");
  
@@ -726,7 +907,7 @@ index 811210061b..b1c7b841e3 100644
          xsprintf(uid_map, "/proc/" PID_FMT "/gid_map", pid->pid);
          r = write_string_file(uid_map, s, WRITE_STRING_FILE_DISABLE_BUFFER);
          if (r < 0)
-@@ -5254,6 +5324,26 @@ static int run_container(
+@@ -5267,6 +5316,26 @@ static int run_container(
                          if (l != sizeof arg_uid_shift)
                                  return log_error_errno(SYNTHETIC_ERRNO(EIO), "Short write while writing UID shift.");
                  }
@@ -755,15 +936,14 @@ index 811210061b..b1c7b841e3 100644
          /* Wait for the outer child. */
 diff --git a/src/shared/machine-bind-user.c b/src/shared/machine-bind-user.c
 deleted file mode 100644
-index 72b950210e..0000000000
+index 278f7c99d0..0000000000
 --- a/src/shared/machine-bind-user.c
 +++ /dev/null
-@@ -1,302 +0,0 @@
+@@ -1,319 +0,0 @@
 -/* SPDX-License-Identifier: LGPL-2.1-or-later */
 -
 -#include <grp.h>
 -#include <pwd.h>
--#include <unistd.h>
 -
 -#include "alloc-util.h"
 -#include "chase.h"
@@ -855,6 +1035,8 @@ index 72b950210e..0000000000
 -                uid_t allocate_uid,
 -                const char *shell,
 -                bool shell_copy,
+-                const char *home_mount_directory,
+-                char **groups,
 -                UserRecord **ret_converted_user,
 -                GroupRecord **ret_converted_group) {
 -
@@ -885,7 +1067,7 @@ index 72b950210e..0000000000
 -                return log_error_errno(SYNTHETIC_ERRNO(EBUSY),
 -                                       "Sorry, the group '%s' already exists in the machine.", g->group_name);
 -
--        h = path_join("/run/host/home/", u->user_name);
+-        h = path_join(home_mount_directory, u->user_name);
 -        if (!h)
 -                return log_oom();
 -
@@ -899,13 +1081,14 @@ index 72b950210e..0000000000
 -        r = user_record_build(
 -                        &converted_user,
 -                        SD_JSON_BUILD_OBJECT(
--                                        SD_JSON_BUILD_PAIR("userName", SD_JSON_BUILD_STRING(u->user_name)),
--                                        SD_JSON_BUILD_PAIR("uid", SD_JSON_BUILD_UNSIGNED(allocate_uid)),
--                                        SD_JSON_BUILD_PAIR("gid", SD_JSON_BUILD_UNSIGNED(allocate_uid)),
+-                                        SD_JSON_BUILD_PAIR_STRING("userName", u->user_name),
+-                                        SD_JSON_BUILD_PAIR_UNSIGNED("uid", allocate_uid),
+-                                        SD_JSON_BUILD_PAIR_UNSIGNED("gid", allocate_uid),
 -                                        SD_JSON_BUILD_PAIR_CONDITION(u->disposition >= 0, "disposition", SD_JSON_BUILD_STRING(user_disposition_to_string(u->disposition))),
--                                        SD_JSON_BUILD_PAIR("homeDirectory", SD_JSON_BUILD_STRING(h)),
+-                                        SD_JSON_BUILD_PAIR_STRING("homeDirectory", h),
 -                                        SD_JSON_BUILD_PAIR("service", JSON_BUILD_CONST_STRING("io.systemd.NSpawn")),
 -                                        JSON_BUILD_PAIR_STRING_NON_EMPTY("shell", shell),
+-                                        SD_JSON_BUILD_PAIR_STRV("memberOf", groups),
 -                                        SD_JSON_BUILD_PAIR("privileged", SD_JSON_BUILD_OBJECT(
 -                                                                           SD_JSON_BUILD_PAIR_CONDITION(!strv_isempty(u->hashed_password), "hashedPassword", SD_JSON_BUILD_VARIANT(hp)),
 -                                                                           SD_JSON_BUILD_PAIR_CONDITION(!!ssh, "sshAuthorizedKeys", SD_JSON_BUILD_VARIANT(ssh))))));
@@ -915,8 +1098,8 @@ index 72b950210e..0000000000
 -        r = group_record_build(
 -                        &converted_group,
 -                        SD_JSON_BUILD_OBJECT(
--                                        SD_JSON_BUILD_PAIR("groupName", SD_JSON_BUILD_STRING(g->group_name)),
--                                        SD_JSON_BUILD_PAIR("gid", SD_JSON_BUILD_UNSIGNED(allocate_uid)),
+-                                        SD_JSON_BUILD_PAIR_STRING("groupName", g->group_name),
+-                                        SD_JSON_BUILD_PAIR_UNSIGNED("gid", allocate_uid),
 -                                        SD_JSON_BUILD_PAIR_CONDITION(g->disposition >= 0, "disposition", SD_JSON_BUILD_STRING(user_disposition_to_string(g->disposition))),
 -                                        SD_JSON_BUILD_PAIR("service", JSON_BUILD_CONST_STRING("io.systemd.NSpawn"))));
 -        if (r < 0)
@@ -972,6 +1155,8 @@ index 72b950210e..0000000000
 -                char **bind_user,
 -                const char *bind_user_shell,
 -                bool bind_user_shell_copy,
+-                const char *bind_user_home_mount_directory,
+-                char **bind_user_groups,
 -                MachineBindUserContext **ret) {
 -
 -        _cleanup_(machine_bind_user_context_freep) MachineBindUserContext *c = NULL;
@@ -1001,8 +1186,10 @@ index 72b950210e..0000000000
 -                _cleanup_(group_record_unrefp) GroupRecord *g = NULL, *cg = NULL;
 -
 -                r = userdb_by_name(*n, /* match= */ NULL, USERDB_DONT_SYNTHESIZE_INTRINSIC|USERDB_DONT_SYNTHESIZE_FOREIGN, &u);
+-                if (r == -ENOEXEC)
+-                        return log_error_errno(r, "User '%s' did not pass filter.", *n);
 -                if (r < 0)
--                        return log_error_errno(r, "Failed to resolve user '%s': %m", *n);
+-                        return log_error_errno(r, "Failed to resolve user '%s': %s", *n, STRERROR_USER(r));
 -
 -                /* For now, let's refuse mapping the root/nobody users explicitly. The records we generate
 -                 * are strictly additive, nss-systemd is typically placed last in /etc/nsswitch.conf. Thus
@@ -1023,8 +1210,11 @@ index 72b950210e..0000000000
 -                        return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Cannot bind user with no UID, refusing.");
 -
 -                r = groupdb_by_gid(user_record_gid(u), /* match= */ NULL, USERDB_DONT_SYNTHESIZE_INTRINSIC|USERDB_DONT_SYNTHESIZE_FOREIGN, &g);
+-                if (r == -ENOEXEC)
+-                        return log_error_errno(r, "Group of user '%s' did not pass filter.", u->user_name);
 -                if (r < 0)
--                        return log_error_errno(r, "Failed to resolve group of user '%s': %m", u->user_name);
+-                        return log_error_errno(r, "Failed to resolve group of user '%s': %s",
+-                                               u->user_name, STRERROR_GROUP(r));
 -
 -                /* We want to synthesize exactly one user + group from the host into the machine. This only
 -                 * makes sense if the user on the host has its own private group. We can't reasonably check
@@ -1041,7 +1231,15 @@ index 72b950210e..0000000000
 -                if (r < 0)
 -                        return r;
 -
--                r = convert_user(directory, u, g, current_uid, bind_user_shell, bind_user_shell_copy, &cu, &cg);
+-                r = convert_user(
+-                                directory,
+-                                u, g,
+-                                current_uid,
+-                                bind_user_shell,
+-                                bind_user_shell_copy,
+-                                bind_user_home_mount_directory,
+-                                bind_user_groups,
+-                                &cu, &cg);
 -                if (r < 0)
 -                        return r;
 -
@@ -1063,14 +1261,14 @@ index 72b950210e..0000000000
 -}
 diff --git a/src/shared/machine-bind-user.h b/src/shared/machine-bind-user.h
 deleted file mode 100644
-index c0a74a704f..0000000000
+index 265fe13727..0000000000
 --- a/src/shared/machine-bind-user.h
 +++ /dev/null
-@@ -1,30 +0,0 @@
+@@ -1,32 +0,0 @@
 -/* SPDX-License-Identifier: LGPL-2.1-or-later */
 -#pragma once
 -
--#include "forward.h"
+-#include "shared-forward.h"
 -
 -typedef struct MachineBindUserData {
 -        /* The host's user/group records */
@@ -1096,21 +1294,123 @@ index c0a74a704f..0000000000
 -                char **bind_user,
 -                const char *bind_user_shell,
 -                bool bind_user_shell_copy,
+-                const char *bind_user_home_mount_directory,
+-                char **bind_user_groups,
 -                MachineBindUserContext **ret);
 diff --git a/src/shared/meson.build b/src/shared/meson.build
-index 6954490a46..a949cd1ad7 100644
+index e0b86e0b81..cd52fb746c 100644
 --- a/src/shared/meson.build
 +++ b/src/shared/meson.build
-@@ -120,7 +120,6 @@ shared_sources = files(
+@@ -122,7 +122,6 @@ shared_sources = files(
          'loop-util.c',
          'loopback-setup.c',
          'lsm-util.c',
 -        'machine-bind-user.c',
          'machine-credential.c',
          'machine-id-setup.c',
-         'machine-pool.c',
+         'macvlan-util.c',
+diff --git a/src/shared/shared-forward.h b/src/shared/shared-forward.h
+index 3695d4e671..1257950d8d 100644
+--- a/src/shared/shared-forward.h
++++ b/src/shared/shared-forward.h
+@@ -68,8 +68,6 @@ typedef struct InstallChange InstallChange;
+ typedef struct InstallInfo InstallInfo;
+ typedef struct LookupPaths LookupPaths;
+ typedef struct LoopDevice LoopDevice;
+-typedef struct MachineBindUserContext MachineBindUserContext;
+-typedef struct MachineCredentialContext MachineCredentialContext;
+ typedef struct MountOptions MountOptions;
+ typedef struct OpenFile OpenFile;
+ typedef struct Pkcs11EncryptedKey Pkcs11EncryptedKey;
+diff --git a/src/vmspawn/vmspawn.c b/src/vmspawn/vmspawn.c
+index 52ed833948..86474049f8 100644
+--- a/src/vmspawn/vmspawn.c
++++ b/src/vmspawn/vmspawn.c
+@@ -143,7 +143,6 @@ static bool arg_notify_ready = true;
+ static char **arg_bind_user = NULL;
+ static char *arg_bind_user_shell = NULL;
+ static bool arg_bind_user_shell_copy = false;
+-static char **arg_bind_user_groups = NULL;
+ 
+ STATIC_DESTRUCTOR_REGISTER(arg_directory, freep);
+ STATIC_DESTRUCTOR_REGISTER(arg_image, freep);
+@@ -165,7 +164,6 @@ STATIC_DESTRUCTOR_REGISTER(arg_tpm_state_path, freep);
+ STATIC_DESTRUCTOR_REGISTER(arg_property, strv_freep);
+ STATIC_DESTRUCTOR_REGISTER(arg_bind_user, strv_freep);
+ STATIC_DESTRUCTOR_REGISTER(arg_bind_user_shell, freep);
+-STATIC_DESTRUCTOR_REGISTER(arg_bind_user_groups, strv_freep);
+ 
+ static int help(void) {
+         _cleanup_free_ char *link = NULL;
+@@ -229,8 +227,6 @@ static int help(void) {
+                "     --bind-user=NAME       Bind user from host to virtual machine\n"
+                "     --bind-user-shell=BOOL|PATH\n"
+                "                            Configure the shell to use for --bind-user= users\n"
+-               "     --bind-user-group=GROUP\n"
+-               "                            Add an auxiliary group to --bind-user= users\n"
+                "\n%3$sIntegration:%4$s\n"
+                "     --forward-journal=FILE|DIR\n"
+                "                           Forward the VM's journal to the host\n"
+@@ -307,7 +303,6 @@ static int parse_argv(int argc, char *argv[]) {
+                 ARG_NOTIFY_READY,
+                 ARG_BIND_USER,
+                 ARG_BIND_USER_SHELL,
+-                ARG_BIND_USER_GROUP,
+         };
+ 
+         static const struct option options[] = {
+@@ -359,7 +354,6 @@ static int parse_argv(int argc, char *argv[]) {
+                 { "notify-ready",      required_argument, NULL, ARG_NOTIFY_READY      },
+                 { "bind-user",         required_argument, NULL, ARG_BIND_USER         },
+                 { "bind-user-shell",   required_argument, NULL, ARG_BIND_USER_SHELL   },
+-                { "bind-user-group",   required_argument, NULL, ARG_BIND_USER_GROUP   },
+                 {}
+         };
+ 
+@@ -721,15 +715,6 @@ static int parse_argv(int argc, char *argv[]) {
+                         break;
+                 }
+ 
+-                case ARG_BIND_USER_GROUP:
+-                        if (!valid_user_group_name(optarg, /* flags= */ 0))
+-                                return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Invalid bind user auxiliary group name: %s", optarg);
+-
+-                        if (strv_extend(&arg_bind_user_groups, optarg) < 0)
+-                                return log_oom();
+-
+-                        break;
+-
+                 case '?':
+                         return -EINVAL;
+ 
+@@ -737,16 +722,12 @@ static int parse_argv(int argc, char *argv[]) {
+                         assert_not_reached();
+                 }
+ 
+-        /* Drop duplicate --bind-user= and --bind-user-group= entries */
++        /* Drop duplicate --bind-user= entries */
+         strv_uniq(arg_bind_user);
+-        strv_uniq(arg_bind_user_groups);
+ 
+         if (arg_bind_user_shell && strv_isempty(arg_bind_user))
+                 return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Cannot use --bind-user-shell= without --bind-user=");
+ 
+-        if (!strv_isempty(arg_bind_user_groups) && strv_isempty(arg_bind_user))
+-                return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Cannot use --bind-user-group= without --bind-user=");
+-
+         if (argc > optind) {
+                 arg_kernel_cmdline_extra = strv_copy(argv + optind);
+                 if (!arg_kernel_cmdline_extra)
+@@ -1859,7 +1840,6 @@ static int run_virtual_machine(int kvm_device_fd, int vhost_device_fd) {
+                         arg_bind_user_shell,
+                         arg_bind_user_shell_copy,
+                         "/run/vmhost/home",
+-                        arg_bind_user_groups,
+                         &bind_user_context);
+         if (r < 0)
+                 return r;
 
-base-commit: 15bd1496c9b59c1ec8ee05e78c65eeb3f148c898
+base-commit: d72165a37f8647a3c0e970c4bd411271a1d3a280
 -- 
-2.51.2
+2.52.0
 

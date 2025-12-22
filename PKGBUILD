@@ -62,7 +62,7 @@ source=("git+https://github.com/systemd/systemd#tag=v${pkgver/rc/-rc}?signed"
         '35-systemd-update.hook')
 sha512sums=('6d39209c4168c3de01399e4dbb7958961790e4c4e508cd1153038daa62620ab74bd14307237f738c2b22cb61c4c235826a48c18ce38dba3df2086a28deb0bad1'
             'ddb9401e47d0bf01874f255803a4b2167ec631484189d29d03694101fd9c77724e735f16d99c5f4ffd8061ae78839b2826ff0e0a925a6f0dbca25f2cfb271a82'
-            '78888a6512456acf85c6708f9de56421798db1524269f3333390efba3a9d3e1a80e11cfa5968bc5a0781d97764d02661b4c9c36251cc67fd6bebbcf30539e3b2'
+            '565f39525d5c4715838a979e2b59521d0bf0a401729615b6f69b895fb8091082bf7368b0f49d7f5e4f18ddfe7aaa5575da2cb936e213915da768e486472ad799'
             '61032d29241b74a0f28446f8cf1be0e8ec46d0847a61dadb2a4f096e8686d5f57fe5c72bcf386003f6520bc4b5856c32d63bf3efe7eb0bc0deefc9f68159e648'
             '3194d1f8bff31b88a79657df83632b9224b66ca2cf8fd806a3ef35cf7a43f46c09c57f3dfd02256a99b6514a8f789b7d3bcfd7e17e00e34aa55ff0c6cedb5f01'
             '5a1d78b5170da5abe3d18fdf9f2c3a4d78f15ba7d1ee9ec2708c4c9c2e28973469bc19386f70b3cf32ffafbe4fcc4303e5ebbd6d5187a1df3314ae0965b25e75'
@@ -180,6 +180,9 @@ build() {
     -Dsbat-distro-pkgname="${pkgname}"
     -Dsbat-distro-version="${pkgver}"
     -Dsbat-distro-url="https://archlinux.org/packages/core/x86_64/${pkgname}/"
+
+    # Due to revert of 852de7ed703655ad39321188fb3e8941a7fb8e0d
+    -Dvmspawn=disabled
   )
 
   arch-meson "${_systemd_src_dir}" build "${_meson_options[@]}" $MESON_EXTRA_CONFIGURE_OPTIONS
