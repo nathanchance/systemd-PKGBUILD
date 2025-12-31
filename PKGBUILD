@@ -307,7 +307,7 @@ package_systemd() {
   ln -s -t "$_" /usr/share/doc/systemd/LICENSES/MIT-0.txt
 
   # symlink kernel-install to installkernel
-  ln -s kernel-install /usr/bin/installkernel
+  ln -s kernel-install "$pkgdir"/usr/bin/installkernel
   ln -s kernel-install.8.gz "$pkgdir"/usr/share/man/man8/installkernel.8.gz
 }
 
