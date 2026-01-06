@@ -19,7 +19,7 @@ pkgname=('systemd'
 # way or another. We use proper version for pacman here (no dash for rc
 # release!), and change in source array below.
 pkgver=259
-pkgrel=1
+pkgrel=2
 arch=('x86_64')
 license=('LGPL-2.1-or-later')
 url='https://www.github.com/systemd/systemd'
